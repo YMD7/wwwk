@@ -27,8 +27,12 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 
 - 認証、権限、capability、Gatekeeper、承認、監査を独自実装しない。
 - 外部原典へのアクセスは CFOS の仕組みを利用する。
-- Linked Source は、CFOS が管理する永続的かつ読取専用の capability を利用する。
+- Linked Source の永続接続には、CFOS が発行する `SourceAccess` だけを利用する。
+- `SourceAccess` は `describe()` と `openReadSession()` 以外の責務を持たせない。
+- 外部原典の binding は `SourceAccess` の発行時だけ利用し、永続化しない。
 - 一時的な Gatekeeper Session を永続リンクとして保存しない。
+- Linked Source の Session は observation-only とし、action と hook を常に拒否する。
+- Linked Source の参照は `linked-source` として CFOS の監査へ記録する。
 - 公開版を CFOS 内部の `GatekeeperLoopback` 契約へ直接依存させない。
 - WWWK のデータや frontmatter を権限の正本にしない。
 - CFOS のセキュリティ境界を迂回する設計を禁止する。
@@ -79,5 +83,5 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 
 保存基盤、検索の実装と高度化、Source 更新の検知、UI、LLM、バックグラウンド処理、
 Agent Skill と API の詳細、本番用 package の配布方法、アップグレード、
-アンインストールの詳細、Source capability の CFOS 契約、Adapter の初期対応範囲は
-未決定である。必要になるまで選定や雛形作成を行わない。
+アンインストールの詳細、`SourceAccess` を発行する CFOS 予約操作の名称、Adapter の
+初期対応範囲は未決定である。必要になるまで選定や雛形作成を行わない。

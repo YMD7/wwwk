@@ -63,8 +63,37 @@ Linked Source は、外部原典への実行時接続である。ポータブル
 Workers RPC と現在の CFOS の Gatekeeper binding を用いたローカル PoC で、別 Worker
 への capability 保存、プロセス再起動後の再読、失効後の遮断を確認した。ただし現在の
 `GatekeeperLoopback` は CFOS の内部実装であり、公開版が直接依存してはならない。
-公開可能な実装には、安定した Source capability 契約を CFOS 側に定義する必要がある。
-具体的な API と Adapter の初期対応範囲は未決定とする。
+公開可能な実装では、次の安定した契約を CFOS 側に定義する。
+
+### SourceAccess 契約
+
+```ts
+interface SourceAccess {
+  describe(): Promise<SourceAccessDescription>;
+  openReadSession(): Promise<unknown>;
+}
+
+interface SourceAccessDescription {
+  vendorId: string;
+  url: string;
+  title: string;
+  tsType: string;
+}
+```
+
+- WWWK が永続化する接続は `SourceAccess` だけとし、外部原典の binding や一時的な
+  Gatekeeper Session は保存しない。
+- `describe()` は Adapter の選択と来歴の記録に必要な非秘密情報だけを返す。
+- `openReadSession()` は呼び出すたびに新しい一時 Session を返す。
+- CFOS は、外部原典の binding に対する予約操作で `SourceAccess` を発行する。その
+  binding は発行時だけ使用し、WWWK の実行状態には保存しない。
+- Session は observation-only の承認キューで開く。`authorizeObservation()` は CFOS の
+  監査へ記録し、`submitAction()` と `bindHook()` は常に拒否する。
+- Source 参照は、元の Agent セッションではなく `linked-source` として監査する。
+- WWWK の Adapter は allowlist された既存の読取メソッドだけを呼び出す。共通の
+  `readSource()` は定義しない。
+
+予約操作の名称と Adapter の初期対応範囲は未決定とする。
 
 ## ポータブルデータ
 
@@ -179,7 +208,7 @@ ID の参照先、全文検索、リンクと被リンクのインデックス�
 - Ingest、Query、Lint の実行設計
 - 検索インデックスの実装、高度な検索方式、UI、LLM、バックグラウンド処理
 - Source 更新を検知する時期と方法
-- Source capability の CFOS 契約と Adapter の初期対応範囲
+- `SourceAccess` を発行する CFOS 予約操作の名称と Adapter の初期対応範囲
 - インポート、エクスポート時の詳細な権限ポリシー
 - Wiki の共有機能
 
