@@ -11,7 +11,8 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 
 1. `PRINCIPLES.md`
 2. `ARCHITECTURE.md`
-3. 対象となる CFOS の最新コードと公式資料
+3. 導入に関する変更では `INSTALLATION.md`
+4. 対象となる CFOS の最新コードと公式資料
 
 ## 作業原則
 
@@ -26,8 +27,22 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 
 - 認証、権限、capability、Gatekeeper、承認、監査を独自実装しない。
 - 外部原典へのアクセスは CFOS の仕組みを利用する。
+- Linked Source は、CFOS が管理する永続的かつ読取専用の capability を利用する。
+- 一時的な Gatekeeper Session を永続リンクとして保存しない。
+- 公開版を CFOS 内部の `GatekeeperLoopback` 契約へ直接依存させない。
 - WWWK のデータや frontmatter を権限の正本にしない。
 - CFOS のセキュリティ境界を迂回する設計を禁止する。
+
+## 導入方針
+
+- 最初に、clone した CFOS へ WWWK を組み込み、ローカルで開発と検証を行う。
+- ローカル検証後に、`cloudflare-os-starter` を使う本番環境へ対応する。
+- WWWK の中核を両環境で共通化し、ローカル専用の前提を持ち込まない。
+- 本番対応を理由に、ローカル検証に不要な仕組みを先行実装しない。
+- リポジトリ直下を単一の `gatekeeper-wwwk` package とし、monorepo 化しない。
+- ローカルでは、CFOS の `packages/gatekeeper-wwwk` から WWWK へ link する。
+- Session API を提案して合意を得るまで、Gatekeeper の実装を開始しない。
+- UI、OAuth、hooks、background worker は、必要性が確定するまで追加しない。
 
 ## エージェントとの境界
 
@@ -48,6 +63,7 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 - Wiki 間リンクを来歴や権限依存として扱わない。
 - 別の Wiki は事実の生成入力にせず、その背後にある Evidence まで辿る。
 - 実際に使用した入力はシステムが記録し、LLM の自己申告だけに依存しない。
+- Linked Source の本文は、allowlist された Adapter が capability から取得する。
 - 権限失効の判定と影響範囲の特定を LLM に任せない。
 - Source 更新時は新しい revision を作り、影響する派生データだけを再生成する。
 - ポータブルデータへ秘密情報や実行時 capability を含めない。
@@ -62,5 +78,6 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 ## 現在の未決定事項
 
 保存基盤、検索の実装と高度化、Source 更新の検知、UI、LLM、バックグラウンド処理、
-Agent Skill と API の詳細、CFOS への導入と削除の手順、具体的な CFOS 統合方法は
+Agent Skill と API の詳細、本番用 package の配布方法、アップグレード、
+アンインストールの詳細、Source capability の CFOS 契約、Adapter の初期対応範囲は
 未決定である。必要になるまで選定や雛形作成を行わない。

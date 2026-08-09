@@ -16,6 +16,19 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 WWWK は CFOS の権限モデルを迂回、複製、置換しない。外部原典へのアクセス可否は
 CFOS が決定し、WWWK はその結果に従う。
 
+## 導入方針
+
+導入は段階的に進める。
+
+1. clone した CFOS へ `gatekeeper-wwwk` を組み込み、ローカルで開発と検証を行う。
+2. 検証後に、`cloudflare-os-starter` から Cloudflare へデプロイする構成へ対応する。
+
+WWWK は独立した Gatekeeper Worker とし、CFOS から `GATEKEEPER_WWWK` service binding
+で接続する。ローカル版と本番版で中核実装を共通化し、本番対応はローカル検証後に行う。
+WWWK リポジトリ直下を単一の `gatekeeper-wwwk` package とし、独自の `packages/` 階層や
+monorepo は作らない。ローカルでは CFOS の `packages/gatekeeper-wwwk` から WWWK へ
+link する。詳細は `INSTALLATION.md` に記録する。
+
 ## エージェントとの境界
 
 WWWK は、AI 向けの利用方法を 1 つの Agent Skill として提供する。Skill は CFOS の
@@ -28,7 +41,30 @@ WWWK は、AI 向けの利用方法を 1 つの Agent Skill として提供す�
 - Skill に個人 Wiki、Source、Evidence、秘密情報、capability、実行状態を含めない。
 - 共通の Skill と、ユーザーごとの非公開データを分離する。
 
-Skill と API の具体的な内容、CFOS への導入と削除の手順は未決定とする。
+Skill と API の具体的な内容は未決定とする。
+
+## Linked Source
+
+Linked Source は、外部原典への実行時接続である。ポータブルな Source revision とは
+分離して管理する。
+
+- 外部原典への接続、再認可、監査、失効は CFOS に委ねる。
+- WWWK は、永続的、読取専用、監査可能な CFOS capability を介して原典を取得する。
+- 来歴を確定する本文は、Agent の自己申告を信頼せず、WWWK の Adapter が capability
+  から取得する。
+- Source の種類は明示的な allowlist と Adapter で段階的に追加し、最初から汎用
+  Source プロトコルを作らない。
+- 初期対応は、Google Doc、Notion Page、Confluence Content などの文書単位の
+  Gatekeeper を優先する。
+- capability と接続状態はポータブルデータに含めない。インポート後は再リンクするまで
+  保存済み Source revision のみを利用できる。
+- 再認可できない Source とその派生データは fail-closed で利用不能とする。
+
+Workers RPC と現在の CFOS の Gatekeeper binding を用いたローカル PoC で、別 Worker
+への capability 保存、プロセス再起動後の再読、失効後の遮断を確認した。ただし現在の
+`GatekeeperLoopback` は CFOS の内部実装であり、公開版が直接依存してはならない。
+公開可能な実装には、安定した Source capability 契約を CFOS 側に定義する必要がある。
+具体的な API と Adapter の初期対応範囲は未決定とする。
 
 ## ポータブルデータ
 
@@ -51,6 +87,7 @@ Source revision -> Evidence -> Wiki
 ### Sources
 
 - LLM が実際に参照した原典を保持する。
+- Linked Source から取得した内容は、その時点の不変な Source revision として保持する。
 - 原典は変更せず、更新時は新しい revision として扱う。
 - 原文を同梱できない場合は、参照先、revision、content hash を保持する。
 - WWWK による解釈や横断的な考察は含めない。
@@ -98,6 +135,9 @@ ID の参照先、全文検索、リンクと被リンクのインデックス�
 - 影響するデータは先に利用不能とし、LLM による再生成は非同期で行える。
 - 逆引きインデックスは派生可能な実行データとし、ポータブルデータへ含めない。
 
+「直ちに利用不能」とは、失効または再認可不能を検知した後の処理を指す。検知する時期と
+方法は未決定とする。
+
 ## Source 更新と再生成
 
 - Source の内容を上書きせず、新しい Source revision として追加する。
@@ -122,6 +162,7 @@ ID の参照先、全文検索、リンクと被リンクのインデックス�
 ## ポータブルにしないもの
 
 - OAuth トークン、秘密情報、Gatekeeper capability
+- Linked Source の接続状態
 - ACL と実行時の権限状態
 - Embedding、検索インデックス、逆引きインデックス
 - ジョブ、キャッシュ、セッション、Durable Object などの実行状態
@@ -131,13 +172,14 @@ ID の参照先、全文検索、リンクと被リンクのインデックス�
 
 ## 未決定事項
 
-- CFOS への具体的な組み込み方
 - Agent Skill とエージェント向け API の具体的な内容
-- インストール、アップグレード、アンインストールの手順と処理
+- 本番用 WWWK package の配布方法
+- インストールスクリプト、アップグレード、アンインストールの詳細
 - 物理ストレージと同期方法
 - Ingest、Query、Lint の実行設計
 - 検索インデックスの実装、高度な検索方式、UI、LLM、バックグラウンド処理
 - Source 更新を検知する時期と方法
+- Source capability の CFOS 契約と Adapter の初期対応範囲
 - インポート、エクスポート時の詳細な権限ポリシー
 - Wiki の共有機能
 
