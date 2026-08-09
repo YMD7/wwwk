@@ -41,7 +41,60 @@ WWWK は、AI 向けの利用方法を 1 つの Agent Skill として提供す�
 - Skill に個人 Wiki、Source、Evidence、秘密情報、capability、実行状態を含めない。
 - 共通の Skill と、ユーザーごとの非公開データを分離する。
 
-Skill と API の具体的な内容は未決定とする。
+Skill と Ingest、更新などの操作 API は未決定とする。
+
+## エージェント向け参照 API
+
+参照系の Session API は、検索と文書取得の 2 操作に限定する。
+
+```ts
+type WwwkDocumentType = "source" | "evidence" | "wiki";
+
+interface WwwkSession {
+  search(
+    query: string,
+    options?: {
+      type?: WwwkDocumentType;
+      limit?: number;
+    },
+  ): Promise<WwwkSearchResult[]>;
+
+  read(id: string): Promise<WwwkDocument | null>;
+}
+
+interface WwwkSearchResult {
+  id: string;
+  type: WwwkDocumentType;
+  title: string;
+  snippet?: string;
+  score?: number;
+}
+
+interface WwwkDocument {
+  id: string;
+  type: WwwkDocumentType;
+  title: string;
+  content: string;
+  inputs: WwwkInputRef[];
+}
+
+interface WwwkInputRef {
+  id: string;
+  type: "source" | "evidence";
+  title: string;
+}
+```
+
+- `search()` はデフォルトで Wiki だけを検索する。Evidence と Source は `type` で
+  明示して検索する。
+- `read()` は本文と生成入力を一緒に返す。Source の `inputs` は空、Evidence は Source、
+  Wiki は Evidence を参照する。
+- 意味リンクは Markdown 本文に保持し、API の別フィールドへ重複させない。
+- 失効または利用不能な文書を検索結果へ含めず、`read()` は `null` を返す。
+- データは CFOS の observation として認可、記録した後にだけ返す。
+- `list()`、`trace()`、ページングは、実測した必要性が出るまで追加しない。
+
+検索エンジン、スコア方式、件数上限などの実装詳細は未決定とする。
 
 ## Linked Source
 
@@ -201,7 +254,7 @@ ID の参照先、全文検索、リンクと被リンクのインデックス�
 
 ## 未決定事項
 
-- Agent Skill とエージェント向け API の具体的な内容
+- Agent Skill と Ingest、更新などの操作 API の具体的な内容
 - 本番用 WWWK package の配布方法
 - インストールスクリプト、アップグレード、アンインストールの詳細
 - 物理ストレージと同期方法

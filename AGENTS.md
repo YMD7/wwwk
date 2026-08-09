@@ -45,7 +45,7 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 - 本番対応を理由に、ローカル検証に不要な仕組みを先行実装しない。
 - リポジトリ直下を単一の `gatekeeper-wwwk` package とし、monorepo 化しない。
 - ローカルでは、CFOS の `packages/gatekeeper-wwwk` から WWWK へ link する。
-- Session API を提案して合意を得るまで、Gatekeeper の実装を開始しない。
+- 参照系 Session API は `search()` と `read()` に限定し、未合意の操作を追加しない。
 - UI、OAuth、hooks、background worker は、必要性が確定するまで追加しない。
 
 ## エージェントとの境界
@@ -54,6 +54,10 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 - Skill にユーザーの知識、秘密情報、capability、実行状態を含めない。
 - 実処理はエージェント向け API を通し、Skill の指示だけに依存しない。
 - 権限、来歴、失効、再生成の不変条件は WWWK Core で保証する。
+- `search()` はデフォルトで Wiki だけを検索する。
+- `read()` は本文と生成入力を一緒に返し、来歴を別 API に分離しない。
+- 失効または利用不能な文書は返さない。
+- 検索結果と本文は、CFOS の observation として記録した後に返す。
 
 ## データ不変条件
 
@@ -82,6 +86,6 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 ## 現在の未決定事項
 
 保存基盤、検索の実装と高度化、Source 更新の検知、UI、LLM、バックグラウンド処理、
-Agent Skill と API の詳細、本番用 package の配布方法、アップグレード、
+Agent Skill と Ingest、更新などの操作 API、本番用 package の配布方法、アップグレード、
 アンインストールの詳細、`SourceAccess` を発行する CFOS 予約操作の名称、Adapter の
 初期対応範囲は未決定である。必要になるまで選定や雛形作成を行わない。
