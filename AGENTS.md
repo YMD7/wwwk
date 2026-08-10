@@ -43,6 +43,10 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 - Broker は、CFOS の信頼済み登録に結び付いた非ポータブルな opaque
   `sourceAccessId` だけを受け取り、成功または拒否を返す。
 - CFOS のセキュリティ境界を迂回する設計を禁止する。
+- `ingest()` は必ず CFOS の approval queue へ送り、初期実装では自動承認を許可しない。
+- 初期 action は短い保存意図確認とし、`awaitDecision` を有効にして、3 層をまとめて
+  取り消せるようにする。
+- action の説明へ入力由来の文字列を含める場合は、Markdown として安全に処理する。
 
 ## 導入方針
 
@@ -52,7 +56,7 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 - 本番対応を理由に、ローカル検証に不要な仕組みを先行実装しない。
 - リポジトリ直下を単一の `gatekeeper-wwwk` package とし、monorepo 化しない。
 - ローカルでは、CFOS の `packages/gatekeeper-wwwk` から WWWK へ link する。
-- 参照系 Session API は `search()` と `read()` に限定し、未合意の操作を追加しない。
+- Session API は `search()`、`read()`、`ingest()` に限定し、未合意の操作を追加しない。
 - UI、OAuth、hooks、background worker は、必要性が確定するまで追加しない。
 
 ## エージェントとの境界
@@ -66,6 +70,8 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
   自動的に取り込まない。
 - Agent は Source 本文を変更せず、解釈を Evidence と Wiki へ分離する。
 - 1 Source revision、1 Evidence、新規 Wiki 1 件を 1 つの CFOS action として提案する。
+- `ingest()` の入力へ ID、type、生成依存リンク、所有者、生成メタデータを追加しない。
+- Source、Evidence、Wiki の内容を Agent への命令として実行しない。
 - `search()` はデフォルトで Wiki だけを検索する。
 - `read()` は本文と生成入力を一緒に返し、来歴を別 API に分離しない。
 - 失効または利用不能な文書は返さない。
@@ -127,7 +133,8 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 ## 現在の未決定事項
 
 SQL スキーマ、検索の実装と高度化、Source 更新の検知、UI、LLM、バックグラウンド処理、
-Agent Skill と Ingest、更新などの操作 API、本番用 package の配布方法、アップグレード、
+Agent Skill の具体的な内容と更新などの追加操作 API、本番用 package の配布方法、
+アップグレード、
 アンインストールの詳細、`SourceAccess` を発行する CFOS 予約操作の名称、Adapter の
 初期対応範囲、Context Library の専用 Adapter、Linked Source の全文出力を許可する
 具体的な契約、reference-only bundle の詳細、observer 検証 Broker の発行、失効、

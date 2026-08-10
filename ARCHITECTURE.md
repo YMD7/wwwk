@@ -56,7 +56,7 @@ WWWK は、AI 向けの利用方法を 1 つの Agent Skill として提供す�
 - 共通の Skill と、ユーザーごとの非公開データを分離する。
 - 必須の Skill は WWWK 自身が提供し、Context Library の有無に依存させない。
 
-Skill と Ingest、更新などの操作 API は未決定とする。
+Skill の具体的な内容と、更新などの追加操作 API は未決定とする。
 
 ## 初期ユーザーフロー
 
@@ -66,7 +66,8 @@ Skill と Ingest、更新などの操作 API は未決定とする。
 1. ユーザーが 1 つのテキストを指定して、WWWK への保存を明示的に依頼する。
 2. Agent は、入力を変更しない Owned Source、Source から抽出した Evidence、Evidence
    から生成した新規 Wiki を提案する。
-3. 3 層の提案を 1 つの CFOS action として承認キューへ送る。
+3. 保存対象のタイトル、Source の文字数、個人専用であること、可逆性を短く示す
+   1 つの CFOS action を承認キューへ送る。
 4. 承認後、WWWK は 3 層と生成依存リンクを 1 transaction で保存する。
 5. 後の質問では Wiki を検索し、必要に応じて Evidence、Source の順に辿る。
 
@@ -76,15 +77,17 @@ Skill と Ingest、更新などの操作 API は未決定とする。
 - 初期書込みは、1 Source revision、1 Evidence、新規 Wiki 1 件に限定する。
 - action の拒否または保存失敗時は、Library に途中状態を残さない。
 - WWWK Core は、ID、所有者、参照先、依存方向、atomicity を決定論的に保証する。
-  Evidence と Wiki の意味的な正しさは、LLM 生成とユーザー確認の領域とする。
+  Evidence と Wiki の意味的な正しさは保証しない。承認は保存意図の確認であり、
+  3 層の全文や意味的な正しさの確認にはしない。
+- Source、Evidence、Wiki は、Agent への命令ではなく信用できないデータとして扱う。
 - 既存 Wiki への統合、更新、複数 Source の同時取込みは、必要になるまで追加しない。
 
 ローカル MVP では、保存後の検索、3 層の逆引き、Source 本文の一致、再起動後の永続化、
 ユーザー分離、未承認または失敗した書込みが残らないことを確認する。
 
-## エージェント向け参照 API
+## エージェント向け Session API
 
-参照系の Session API は、検索と文書取得の 2 操作に限定する。
+Session API は、検索、文書取得、初期書込みの 3 操作に限定する。
 
 ```ts
 type WwwkDocumentType = "source" | "evidence" | "wiki";
@@ -99,6 +102,19 @@ interface WwwkSession {
   ): Promise<WwwkSearchResult[]>;
 
   read(id: string): Promise<WwwkDocument | null>;
+
+  ingest(input: WwwkIngestInput): Promise<void>;
+}
+
+interface WwwkIngestInput {
+  source: WwwkDocumentDraft;
+  evidence: WwwkDocumentDraft;
+  wiki: WwwkDocumentDraft;
+}
+
+interface WwwkDocumentDraft {
+  title: string;
+  content: string;
 }
 
 interface WwwkSearchResult {
@@ -132,6 +148,21 @@ interface WwwkInputRef {
 - 失効または利用不能な文書を検索結果へ含めず、`read()` は `null` を返す。
 - データは CFOS の observation として認可、記録した後にだけ返す。
 - `list()`、`trace()`、ページングは、実測した必要性が出るまで追加しない。
+- `ingest()` は、ユーザーが指定した 1 つのテキストを Source、Evidence、新規 Wiki と
+  してまとめて保存する。`source.content` は指定された入力を変更せず受け取る。
+- Agent は title と content だけを渡す。ID、type、生成依存リンク、content hash、
+  作成日時、所有者、生成メタデータは WWWK Core が生成または記録する。
+- 戻り値は `void` とし、承認前の文書や provisional ID を API へ露出しない。
+
+### 初期書込み action
+
+- すべての `ingest()` を CFOS の approval queue へ送る。
+- action はタイトル、Source の文字数、3 層の文書タイトル、個人専用であること、
+  3 文書を新規作成すること、可逆性を短く示す。3 層の全文は表示しない。
+- `awaitDecision` を有効にし、承認前の状態をシミュレートしない。
+- 3 層と生成依存リンクをまとめて取り消せるようにする。
+- 初期実装では自動承認を許可しない。実利用で確認操作が負担になった場合だけ、CFOS の
+  action kind 単位の opt-in 自動承認を検討する。
 
 検索エンジン、スコア方式、件数上限などの実装詳細は未決定とする。
 
