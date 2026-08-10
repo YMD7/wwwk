@@ -59,6 +59,15 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 - 失効または利用不能な文書は返さない。
 - 検索結果と本文は、CFOS の observation として記録した後に返す。
 
+## 保存境界
+
+- ユーザーごとに 1 つの SQLite-backed `WwwkLibrary` Durable Object を使用する。
+- 3 層データと生成依存リンクは SQL、実行時 capability は同じ DO の embedded KV に
+  保存する。
+- SQLite のファイル、テーブル、`rowid` をポータブル形式へ露出しない。
+- export と空の `WwwkLibrary` への import の往復で、論理データの一致を検証する。
+- D1、R2、Vectorize、外部 Workers KV は、実測した必要性なしに追加しない。
+
 ## データ不変条件
 
 - 依存方向は `Source revision -> Evidence -> Wiki` とする。
@@ -85,7 +94,7 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 
 ## 現在の未決定事項
 
-保存基盤、検索の実装と高度化、Source 更新の検知、UI、LLM、バックグラウンド処理、
+SQL スキーマ、検索の実装と高度化、Source 更新の検知、UI、LLM、バックグラウンド処理、
 Agent Skill と Ingest、更新などの操作 API、本番用 package の配布方法、アップグレード、
 アンインストールの詳細、`SourceAccess` を発行する CFOS 予約操作の名称、Adapter の
 初期対応範囲は未決定である。必要になるまで選定や雛形作成を行わない。

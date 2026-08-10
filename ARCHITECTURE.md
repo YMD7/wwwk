@@ -148,6 +148,19 @@ interface SourceAccessDescription {
 
 予約操作の名称と Adapter の初期対応範囲は未決定とする。
 
+## 実行時ストレージ
+
+ユーザーごとに 1 つの SQLite-backed `WwwkLibrary` Durable Object を割り当てる。
+
+- SQL は、Source、Evidence、Wiki と生成依存リンクを保存する。
+- 同じ Durable Object の embedded KV は、`SourceAccess` などの実行時 capability を
+  保存する。外部の Workers KV は使用しない。
+- 検索と逆引きのインデックスは、保存データから再生成できる実行データとする。
+- D1、R2、Vectorize は初期依存にせず、実測した必要性が出た場合だけ追加を検討する。
+
+SQLite のスキーマは非公開の実装詳細であり、ポータブル形式にはしない。具体的な
+テーブル、検索方式、マイグレーションは未決定とする。
+
 ## ポータブルデータ
 
 ポータブルにする対象はシステムではなく、次のデータである。
@@ -159,6 +172,13 @@ bundle/
 ├── evidence/
 └── wiki/
 ```
+
+- SQLite ファイルやテーブル構造をエクスポート形式にしない。
+- 文書 ID は SQLite の `rowid` などに依存しない、ストレージ非依存の安定 ID とする。
+- bundle だけで 3 層データと生成依存リンクを損失なく表現する。
+- import 時は、インデックスなどの実行データを bundle から再構築する。
+- `export -> 空の WwwkLibrary へ import` の往復で、論理データと生成依存リンクが
+  一致することをテストする。
 
 依存方向は一方向に固定する。
 
@@ -257,7 +277,7 @@ ID の参照先、全文検索、リンクと被リンクのインデックス�
 - Agent Skill と Ingest、更新などの操作 API の具体的な内容
 - 本番用 WWWK package の配布方法
 - インストールスクリプト、アップグレード、アンインストールの詳細
-- 物理ストレージと同期方法
+- `WwwkLibrary` の SQL スキーマと同期方法
 - Ingest、Query、Lint の実行設計
 - 検索インデックスの実装、高度な検索方式、UI、LLM、バックグラウンド処理
 - Source 更新を検知する時期と方法
