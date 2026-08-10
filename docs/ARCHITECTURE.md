@@ -147,8 +147,12 @@ interface WwwkInputRef {
 - `read()` は本文と生成入力を一緒に返す。Source の `inputs` は空、Evidence は Source、
   Wiki は Evidence を参照する。
 - 意味リンクは Markdown 本文に保持し、API の別フィールドへ重複させない。
-- 失効または利用不能な文書を検索結果へ含めず、`read()` は `null` を返す。
+- 文書単位で失効または利用不能な文書を検索結果へ含めず、`read()` は `null` を返す。
+  account 全体の revoke 後は Session の開始と全操作を拒否する。
 - データは CFOS の observation として認可、記録した後にだけ返す。
+- owner-only データを返す observation は `prohibitAllSharing` を指定する。既に共有中の
+  Gadget では結果を返さず、private Gadget でも最初の返却後は CFOS の契約により共有と
+  action が禁止される。このため初期フローでは、保存 action を先に完了してから検索する。
 - `list()`、`trace()`、ページングは、実測した必要性が出るまで追加しない。
 - `ingest()` は、ユーザーが指定した 1 つのテキストを Source、Evidence、新規 Wiki と
   してまとめて保存する。`source.content` は指定された入力を変更せず受け取る。
@@ -361,6 +365,13 @@ revert も同期 SQL だけを 1 transaction で実行する。
 部分一致や外部依存がある場合は fail-closed とする。初期 Ingest は独立した新規 3 層だけを
 作るため、通常は外部依存を持たない。将来の更新 API は、この revert 契約を壊さないように
 別途設計する。
+
+### Account revoke
+
+account の revoke は、同じ SQLite-backed Durable Object の transaction で生成依存リンクと
+文書を削除し、embedded KV に永久失効 marker を保存する。再起動後も `search()`、`read()`、
+`ingest()`、pending action の適用、revert を拒否する。失効済み account は再作成せず、再接続
+が必要になった場合は別 account として扱う。
 
 ## ポータブルデータ
 

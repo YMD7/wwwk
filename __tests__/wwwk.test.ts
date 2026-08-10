@@ -9,6 +9,7 @@ import type { WwwkGatekeeper, WwwkLibrary } from "../src/index.js";
 import type { WwwkTestParent } from "./worker.js";
 
 type Batch = Parameters<WwwkLibrary["applyIngest"]>[0];
+type IngestInput = Parameters<WwwkTestParent["ingest"]>[1];
 
 const testEnv = env as unknown as {
   WWWK_LIBRARY: DurableObjectNamespace<WwwkLibrary>;
@@ -49,6 +50,14 @@ function makeBatch(prefix = "first"): Batch {
       isAvailable: 1,
       createdAt,
     },
+  };
+}
+
+function makeInput(batch: Batch): IngestInput {
+  return {
+    source: { title: batch.source.title, content: batch.source.content },
+    evidence: { title: batch.evidence.title, content: batch.evidence.content },
+    wiki: { title: batch.wiki.title, content: batch.wiki.content },
   };
 }
 
@@ -171,8 +180,9 @@ describe("WwwkGatekeeper", () => {
     expect(discovery.expansion.message).toContain("保存方法を確認");
   });
 
-  it("承認前は保存せず、承認後だけ検索可能にする", async () => {
+  it("privateでは保存と参照ができ、共有中は参照を拒否する", async () => {
     const parent = testEnv.WWWK_TEST_PARENT.getByName("parent-a");
+    await parent.configureSharing(false);
     const batch = makeBatch();
     const action = await parent.ingest("owner-a", {
       source: { title: batch.source.title, content: batch.source.content },
@@ -191,19 +201,93 @@ describe("WwwkGatekeeper", () => {
     const source = await parent.read("owner-a", evidence!.inputs[0].id);
     expect(source?.content).toBe(batch.source.content);
     await expect(parent.search("owner-b", "検証用")).resolves.toEqual([]);
+
+    await parent.configureSharing(true);
+    await expect(
+      parent.searchOutcome("owner-a", "検証用"),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining("shared"),
+    });
+    await expect(
+      parent.readOutcome("owner-a", results[0].id),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining("shared"),
+    });
   });
 
   it("拒否したactionの文書を保存しない", async () => {
     const parent = testEnv.WWWK_TEST_PARENT.getByName("parent-a");
+    await parent.configureSharing(false);
     const batch = makeBatch("rejected");
-    const action = await parent.ingest("owner-a", {
-      source: { title: batch.source.title, content: batch.source.content },
-      evidence: { title: batch.evidence.title, content: batch.evidence.content },
-      wiki: { title: batch.wiki.title, content: batch.wiki.content },
-    });
+    const action = await parent.ingest("owner-a", makeInput(batch));
 
     await parent.reject("owner-a", action.actionId);
     await expect(parent.search("owner-a", "検証用")).resolves.toEqual([]);
+  });
+
+  it("revoke後は再起動しても旧Facetとpending actionを拒否する", async () => {
+    const parent = testEnv.WWWK_TEST_PARENT.getByName("parent-a");
+    await parent.configureSharing(false);
+    const stored = makeBatch("stored");
+    const storedAction = await parent.ingest("owner-a", makeInput(stored));
+    await parent.approve("owner-a", storedAction.actionId);
+
+    const pending = makeBatch("pending");
+    const pendingAction = await parent.ingest("owner-a", makeInput(pending));
+    const results = await parent.search("owner-a", "検証用");
+    const wikiId = results[0].id;
+
+    await parent.revoke("owner-a");
+    await abortAllDurableObjects();
+
+    const restartedParent = testEnv.WWWK_TEST_PARENT.getByName("parent-a");
+    await expect(
+      restartedParent.searchOutcome("owner-a", "検証用"),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining("permanently revoked"),
+    });
+    await expect(
+      restartedParent.readOutcome("owner-a", wikiId),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining("permanently revoked"),
+    });
+    await expect(
+      restartedParent.approveOutcome("owner-a", pendingAction.actionId),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining("permanently revoked"),
+    });
+    await expect(
+      restartedParent.approveOutcome("owner-a", pendingAction.actionId),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining("does not exist"),
+    });
+    await expect(
+      restartedParent.ingestOutcome("owner-a", makeInput(pending)),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining("permanently revoked"),
+    });
+
+    const restartedLibrary = testEnv.WWWK_LIBRARY.getByName("owner-a");
+    await runInDurableObject(restartedLibrary, (_instance, state) => {
+      const documentCount = state.storage.sql.exec<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM documents",
+      ).one().count;
+      const inputCount = state.storage.sql.exec<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM document_inputs",
+      ).one().count;
+      expect({ documentCount, inputCount }).toEqual({
+        documentCount: 0,
+        inputCount: 0,
+      });
+      expect(state.storage.kv.get("libraryRevoked")).toBe(true);
+    });
   });
 
   it("拒否したpending actionを削除する", async () => {

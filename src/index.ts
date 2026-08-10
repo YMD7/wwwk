@@ -30,6 +30,7 @@ type ObservationDescription = {
   title: string;
   description: string;
   excludeObservers?: string[];
+  prohibitAllSharing?: boolean;
 };
 type ActionDescription = {
   title: string;
@@ -74,6 +75,8 @@ const AGENT_CATALOG_MAX_ENTRIES = 25;
 const AGENT_CATALOG_MAX_ID_LENGTH = 256;
 const AGENT_CATALOG_MAX_TITLE_LENGTH = 100;
 const AGENT_CATALOG_MAX_DESCRIPTION_LENGTH = 400;
+const LIBRARY_REVOKED_KEY = "libraryRevoked";
+const LIBRARY_REVOKED_ERROR = "WWWK account is permanently revoked.";
 
 function boundAgentCatalog(
   entries: AgentCatalogEntry[],
@@ -287,6 +290,7 @@ export class WwwkSessionImpl extends RpcTarget {
       await this.approvalQueue.authorizeObservation({
         title: "WWWK search",
         description: `Returned ${results.length} personal Wiki result(s).`,
+        prohibitAllSharing: true,
       });
     }
     return results;
@@ -299,6 +303,7 @@ export class WwwkSessionImpl extends RpcTarget {
       await this.approvalQueue.authorizeObservation({
         title: "WWWK read",
         description: "Read one document from the personal Wiki.",
+        prohibitAllSharing: true,
       });
     }
     return document;
@@ -308,6 +313,7 @@ export class WwwkSessionImpl extends RpcTarget {
     validateDraft("source", input.source);
     validateDraft("evidence", input.evidence);
     validateDraft("wiki", input.wiki);
+    await this.library.assertLive();
 
     const createdAt = Date.now();
     const [sourceHash, evidenceHash, wikiHash] = await Promise.all([
@@ -427,6 +433,7 @@ export class WwwkLibrary extends DurableObject<Cloudflare.Env> {
     type: WwwkDocumentType,
     limit: number,
   ): WwwkSearchResult[] {
+    this.assertLive();
     validateDocumentType(type);
     return this.ctx.storage.sql.exec<{
       id: string;
@@ -454,6 +461,7 @@ export class WwwkLibrary extends DurableObject<Cloudflare.Env> {
   }
 
   read(id: string): WwwkDocument | null {
+    this.assertLive();
     const rows = this.ctx.storage.sql.exec<{
       id: string;
       type: WwwkDocumentType;
@@ -501,7 +509,10 @@ export class WwwkLibrary extends DurableObject<Cloudflare.Env> {
     }
 
     this.ctx.storage.transactionSync(() => {
-      const existing = this.selectDocuments(documents.map((document) => document.id));
+      this.assertLive();
+      const existing = this.selectDocuments(
+        documents.map((document) => document.id),
+      );
       const links = this.selectLinks(documents.map((document) => document.id));
       if (existing.length === 0 && links.length === 0) {
         for (const document of documents) this.insertDocument(document);
@@ -526,6 +537,7 @@ export class WwwkLibrary extends DurableObject<Cloudflare.Env> {
   revertIngest(ids: IngestIds): void {
     const documentIds = [ids.sourceId, ids.evidenceId, ids.wikiId];
     this.ctx.storage.transactionSync(() => {
+      this.assertLive();
       const existing = this.selectDocuments(documentIds);
       const links = this.selectLinks(documentIds);
       if (existing.length === 0 && links.length === 0) return;
@@ -562,8 +574,18 @@ export class WwwkLibrary extends DurableObject<Cloudflare.Env> {
     });
   }
 
-  revoke(): Promise<void> {
-    return this.ctx.storage.deleteAll();
+  assertLive(): void {
+    if (this.ctx.storage.kv.get<boolean>(LIBRARY_REVOKED_KEY) === true) {
+      throw new Error(LIBRARY_REVOKED_ERROR);
+    }
+  }
+
+  revoke(): void {
+    this.ctx.storage.transactionSync(() => {
+      this.ctx.storage.sql.exec("DELETE FROM document_inputs");
+      this.ctx.storage.sql.exec("DELETE FROM documents");
+      this.ctx.storage.kv.put(LIBRARY_REVOKED_KEY, true);
+    });
   }
 
   private selectDocuments(ids: string[]): StoredDocument[] {
@@ -661,6 +683,7 @@ export class WwwkGatekeeper
   async startSession(
     approvalQueue: NativeRpcStub<ApprovalQueue>,
   ): Promise<WwwkSessionImpl> {
+    await this.library().assertLive();
     return new WwwkSessionImpl(
       this.library(),
       approvalQueue.dup(),
@@ -730,7 +753,17 @@ export class WwwkGatekeeper
       if (action.status === "applied") return;
       throw new Error("WWWK action was already reverted.");
     }
-    await this.library().applyIngest(action.batch);
+    try {
+      await this.library().applyIngest(action.batch);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message.includes(LIBRARY_REVOKED_ERROR)
+      ) {
+        this.dropPendingAction(actionId);
+      }
+      throw error;
+    }
     this.ctx.storage.kv.put<StoredAction>(key, {
       status: "applied",
       ids: idsFromBatch(action.batch),
