@@ -10,7 +10,7 @@
 - 外部原典は CFOS capability でリンクし、接続状態とポータブルデータを分離する。
 - 認証、権限、承認、監査は CFOS に委ね、そのセキュリティ境界に従う。
 
-現在は設計段階である。まずローカル版 CFOS で開発と検証を行い、その後
+現在はローカル版 CFOS での MVP 実装を進める段階である。その後
 `cloudflare-os-starter` を使う本番環境へ対応する。
 
 ## 独立性と商標
@@ -22,9 +22,11 @@ Cloudflare および関連する名称とロゴは、Cloudflare, Inc. の商標�
 
 ## ドキュメント
 
-- [Architecture](ARCHITECTURE.md)
-- [Installation](INSTALLATION.md)
-- [Principles](PRINCIPLES.md)
+- [Development](DEVELOPMENT.md)
+- [Implementation phases](docs/IMPLEMENTATION_PHASES.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Installation](docs/INSTALLATION.md)
+- [Principles](docs/PRINCIPLES.md)
 - [Agent guide](AGENTS.md)
 
 ## ライセンス
