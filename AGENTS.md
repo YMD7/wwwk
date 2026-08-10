@@ -62,6 +62,10 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 - Skill にユーザーの知識、秘密情報、capability、実行状態を含めない。
 - 実処理はエージェント向け API を通し、Skill の指示だけに依存しない。
 - 権限、来歴、失効、再生成の不変条件は WWWK Core で保証する。
+- 初期書込みはユーザーが明示した 1 つのテキストだけを対象とし、会話や文書を
+  自動的に取り込まない。
+- Agent は Source 本文を変更せず、解釈を Evidence と Wiki へ分離する。
+- 1 Source revision、1 Evidence、新規 Wiki 1 件を 1 つの CFOS action として提案する。
 - `search()` はデフォルトで Wiki だけを検索する。
 - `read()` は本文と生成入力を一緒に返し、来歴を別 API に分離しない。
 - 失効または利用不能な文書は返さない。
@@ -72,6 +76,8 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 - ユーザーごとに 1 つの SQLite-backed `WwwkLibrary` Durable Object を使用する。
 - 3 層データと生成依存リンクは SQL、実行時 capability は同じ DO の embedded KV に
   保存する。
+- 初期 action の 3 層データと生成依存リンクは 1 transaction で保存し、拒否または
+  失敗時に途中状態を残さない。
 - SQLite のファイル、テーブル、`rowid` をポータブル形式へ露出しない。
 - ポータブルな Concept 文書は YAML frontmatter と Markdown 本文で表現し、実行時は
   frontmatter を JSON 互換の値へ正規化する。
