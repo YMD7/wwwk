@@ -1,6 +1,5 @@
 # WWWK Architecture
 
-
 ## 位置づけ
 
 WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡張である。

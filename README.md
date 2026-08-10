@@ -1,6 +1,5 @@
 # WWWK
 
-
 `WWWK`（読み: うーく、発音: `/u:k/`）は、Cloudflare OS（CFOS）へ
 個人専用の LLM Wiki を追加する拡張である。
 
@@ -14,9 +13,20 @@
 現在は設計段階である。まずローカル版 CFOS で開発と検証を行い、その後
 `cloudflare-os-starter` を使う本番環境へ対応する。
 
+## 独立性と商標
+
+WWWK は独立したオープンソースプロジェクトであり、Cloudflare, Inc. の公式製品では
+なく、同社との提携、同社による承認または支援を示すものではない。
+
+Cloudflare および関連する名称とロゴは、Cloudflare, Inc. の商標または登録商標である。
+
 ## ドキュメント
 
 - [Architecture](ARCHITECTURE.md)
 - [Installation](INSTALLATION.md)
 - [Principles](PRINCIPLES.md)
 - [Agent guide](AGENTS.md)
+
+## ライセンス
+
+[Apache License 2.0](LICENSE)

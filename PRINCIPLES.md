@@ -1,6 +1,5 @@
 # WWWK Principles
 
-
 ## 1. KISS と YAGNI
 
 - 現在の目的に必要な最小構成を選ぶ。
