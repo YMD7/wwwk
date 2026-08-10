@@ -16,6 +16,20 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 WWWK は CFOS の権限モデルを迂回、複製、置換しない。外部原典へのアクセス可否は
 CFOS が決定し、WWWK はその結果に従う。
 
+### Context Library との境界
+
+CFOS の Context Library は、人が配置した文書や Agent Skill を private または共有の
+collection として管理する。WWWK は、原典から Source revision、Evidence、Wiki を編纂し、
+来歴と生成依存を管理する。
+
+- WWWK は Context Library と Worker、ストレージ、スキーマを共有しない。
+- Context Library の内部型や Durable Object へ直接依存せず、collection を自動変更しない。
+- Context Library は将来、CFOS capability と専用 Adapter を介して利用できる任意の
+  Source provider とする。WWWK の動作要件にはしない。
+- 連携できない場合も、利用者は Context 文書を明示的にコピーまたはエクスポートし、
+  Owned Source として取り込める。
+- Context Library Adapter の実証と具体的な契約は、実装対象へ含める直前まで行わない。
+
 ## 導入方針
 
 導入は段階的に進める。
@@ -40,6 +54,7 @@ WWWK は、AI 向けの利用方法を 1 つの Agent Skill として提供す�
 - WWWK Core は、3 層データと決定論的な不変条件を API の内側で保証する。
 - Skill に個人 Wiki、Source、Evidence、秘密情報、capability、実行状態を含めない。
 - 共通の Skill と、ユーザーごとの非公開データを分離する。
+- 必須の Skill は WWWK 自身が提供し、Context Library の有無に依存させない。
 
 Skill と Ingest、更新などの操作 API は未決定とする。
 
@@ -96,10 +111,20 @@ interface WwwkInputRef {
 
 検索エンジン、スコア方式、件数上限などの実装詳細は未決定とする。
 
+## Source の権限モード
+
+Source revision は、来歴とは別に次の権限モードを持つ。
+
+- Owned Source は、WWWK の所有者が管理する独立したコピーであり、外部原典の再認可を
+  必要としない。
+- Linked Source は、外部原典への有効な `SourceAccess` が利用権限の正本となる。
+- 外部原典に由来することを示す来歴は、Owned Source に変換した後も保持する。
+- 権限モードやポータブルなメタデータを、外部原典への権限付与に使わない。
+
 ## Linked Source
 
-Linked Source は、外部原典への実行時接続である。ポータブルな Source revision とは
-分離して管理する。
+Linked Source は、外部原典への実行時接続と、その接続を利用権限の正本とする Source
+revision の組である。capability とポータブルな Source revision は分離して管理する。
 
 - 外部原典への接続、再認可、監査、失効は CFOS に委ねる。
 - WWWK は、永続的、読取専用、監査可能な CFOS capability を介して原典を取得する。
@@ -109,9 +134,10 @@ Linked Source は、外部原典への実行時接続である。ポータブル
   Source プロトコルを作らない。
 - 初期対応は、Google Doc、Notion Page、Confluence Content などの文書単位の
   Gatekeeper を優先する。
-- capability と接続状態はポータブルデータに含めない。インポート後は再リンクするまで
-  保存済み Source revision のみを利用できる。
-- 再認可できない Source とその派生データは fail-closed で利用不能とする。
+- capability と接続状態はポータブルデータに含めない。reference-only の Linked Source
+  は、インポート後に再リンクするまで利用不能とする。
+- 有効な `SourceAccess` を確認できない Linked Source とその派生データは、fail-closed
+  で利用不能とする。
 
 Workers RPC と現在の CFOS の Gatekeeper binding を用いたローカル PoC で、別 Worker
 への capability 保存、プロセス再起動後の再読、失効後の遮断を確認した。ただし現在の
@@ -175,10 +201,25 @@ bundle/
 
 - SQLite ファイルやテーブル構造をエクスポート形式にしない。
 - 文書 ID は SQLite の `rowid` などに依存しない、ストレージ非依存の安定 ID とする。
-- bundle だけで 3 層データと生成依存リンクを損失なく表現する。
+- エクスポートを許可された 3 層データと生成依存リンクは、bundle だけで損失なく
+  表現する。
 - import 時は、インデックスなどの実行データを bundle から再構築する。
 - `export -> 空の WwwkLibrary へ import` の往復で、論理データと生成依存リンクが
   一致することをテストする。
+
+### エクスポート境界
+
+- Owned Source とその派生データは、self-contained bundle としてエクスポートできる。
+- Linked Source の本文を含むエクスポートは、有効な `SourceAccess` と出力許可を
+  確認し、利用者の明示的な操作として認可、監査する。
+- 全文を出力する Linked Source は、外部由来の来歴を保持した独立した Owned Source
+  snapshot としてインポートする。以後、そのコピーは外部原典の権限失効に連動しない。
+- 全文出力を許可できない Linked Source と、その内容を含み得る派生データは、
+  self-contained export の対象にしない。参照先、revision、content hash、生成依存を
+  reference-only として持ち運べるようにする。
+- 権限失効を検知した後は、新しい全文エクスポートを拒否する。失効前に正当に
+  エクスポートされた外部コピーの保存、削除、再配布は WWWK の管理対象外とする。
+- 自動または定期エクスポートは初期スコープに含めない。
 
 ### OKF との対応
 
@@ -214,7 +255,8 @@ Source revision -> Evidence -> Wiki
 - LLM が実際に参照した原典を保持する。
 - Linked Source から取得した内容は、その時点の不変な Source revision として保持する。
 - 原典は変更せず、更新時は新しい revision として扱う。
-- 原文を同梱できない場合は、参照先、revision、content hash を保持する。
+- 原文を同梱できない場合は reference-only とし、参照先、revision、content hash を
+  保持する。
 - WWWK による解釈や横断的な考察は含めない。
 
 ### Evidence
@@ -305,7 +347,8 @@ ID の参照先、全文検索、リンクと被リンクのインデックス�
 - 検索インデックスの実装、高度な検索方式、UI、LLM、バックグラウンド処理
 - Source 更新を検知する時期と方法
 - `SourceAccess` を発行する CFOS 予約操作の名称と Adapter の初期対応範囲
-- インポート、エクスポート時の詳細な権限ポリシー
+- Context Library から `SourceAccess` を発行する契約と専用 Adapter
+- Linked Source の全文出力を許可する具体的な契約と reference-only bundle の詳細
 - Wiki の共有機能
 
 初期スコープでは Wiki は個人専用かつ非公開とする。

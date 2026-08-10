@@ -25,15 +25,24 @@
 - WWWK は個人 Wiki の知識ライフサイクルを担う。
 - Agent Skill は利用方法を教え、WWWK の API と Core が実処理を担う。
 - Skill の指示を権限や正しさの保証として扱わない。
+- WWWK の保存基盤や必須機能を CFOS の Context Library に依存させない。
+- Context Library は、公開された CFOS capability を介する任意の Source provider として
+  のみ連携する。
 - ポータブル形式はデータを表現するが、権限を付与しない。
 - システム固有の状態とポータブルデータを分離する。
 
 ## 4. データだけをポータブルにする
 
-- Sources、Evidence、Wiki を損失なく書き出し、再度取り込めるようにする。
+- エクスポートを許可された Sources、Evidence、Wiki と生成依存リンクを損失なく
+  書き出し、再度取り込めるようにする。
 - 人間とエージェントの両方が読める、単純で公開された形式を優先する。
 - 秘密情報、実行状態、インデックス、特定ベンダーの仕組みは持ち運ばない。
-- Linked Source の capability と接続状態は持ち運ばず、移行先で再リンクする。
+- Owned Source は独立したコピー、Linked Source は外部原典の capability に依存する
+  データとして区別する。
+- Linked Source の capability と接続状態は持ち運ばず、reference-only のデータは
+  移行先で再リンクする。
+- 全文エクスポートは独立した Owned Source snapshot の作成として扱い、外部へ出た
+  コピーを将来の権限失効で回収できるとはみなさない。
 - 実行時ストレージの形式を公開データ形式にせず、安定 ID を保存基盤から独立させる。
 - export と空環境への import の往復で、論理データの一致を検証する。
 - ポータビリティのために、実行環境まで標準化しない。

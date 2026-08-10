@@ -34,6 +34,9 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 - Linked Source の Session は observation-only とし、action と hook を常に拒否する。
 - Linked Source の参照は `linked-source` として CFOS の監査へ記録する。
 - 公開版を CFOS 内部の `GatekeeperLoopback` 契約へ直接依存させない。
+- Context Library と Worker、ストレージ、スキーマを共有せず、その内部型や Durable
+  Object へ直接依存しない。
+- Context Library との連携は、将来の任意 Source provider Adapter として扱う。
 - WWWK のデータや frontmatter を権限の正本にしない。
 - CFOS のセキュリティ境界を迂回する設計を禁止する。
 
@@ -51,6 +54,7 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 ## エージェントとの境界
 
 - WWWK の利用方法は、小さな Agent Skill として必要時に読み込ませる。
+- 必須の Skill は WWWK 自身が提供し、Context Library の有無に依存させない。
 - Skill にユーザーの知識、秘密情報、capability、実行状態を含めない。
 - 実処理はエージェント向け API を通し、Skill の指示だけに依存しない。
 - 権限、来歴、失効、再生成の不変条件は WWWK Core で保証する。
@@ -83,7 +87,15 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 - Wiki 間リンクを来歴や権限依存として扱わない。
 - 別の Wiki は事実の生成入力にせず、その背後にある Evidence まで辿る。
 - 実際に使用した入力はシステムが記録し、LLM の自己申告だけに依存しない。
+- Source の権限モードは、独立したコピーである Owned Source と、外部原典の
+  `SourceAccess` に依存する Linked Source に限定する。
 - Linked Source の本文は、allowlist された Adapter が capability から取得する。
+- Linked Source の全文エクスポートは、有効な `SourceAccess` と出力許可を確認し、
+  明示的な操作として認可、監査する。
+- 全文エクスポートした Linked Source は、外部由来の来歴を保持した Owned Source
+  snapshot として扱う。外部へ出たコピーは将来の権限失効の対象にしない。
+- 全文出力を許可できない Source と、その内容を含み得る派生データを self-contained
+  bundle に含めない。
 - 権限失効の判定と影響範囲の特定を LLM に任せない。
 - Source 更新時は新しい revision を作り、影響する派生データだけを再生成する。
 - ポータブルデータへ秘密情報や実行時 capability を含めない。
@@ -100,4 +112,6 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 SQL スキーマ、検索の実装と高度化、Source 更新の検知、UI、LLM、バックグラウンド処理、
 Agent Skill と Ingest、更新などの操作 API、本番用 package の配布方法、アップグレード、
 アンインストールの詳細、`SourceAccess` を発行する CFOS 予約操作の名称、Adapter の
-初期対応範囲は未決定である。必要になるまで選定や雛形作成を行わない。
+初期対応範囲、Context Library の専用 Adapter、Linked Source の全文出力を許可する
+具体的な契約、reference-only bundle の詳細は未決定である。必要になるまで選定や
+雛形作成を行わない。
