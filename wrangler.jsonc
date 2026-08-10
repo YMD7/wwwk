@@ -1,0 +1,33 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "gatekeeper-wwwk",
+  "main": ".wrangler/validate/src/index.ts",
+  "build": {
+    "command": "pnpm exec capnweb-validate build --out .wrangler/validate",
+    "watch_dir": ["src", "skills"]
+  },
+  "compatibility_date": "2026-02-02",
+  "compatibility_flags": ["nodejs_compat"],
+  "rules": [
+    {
+      "type": "Text",
+      "globs": ["**/*.txt", "**/SKILL.md"],
+      "fallthrough": false
+    }
+  ],
+  "exports": {
+    "WwwkLibrary": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    },
+    "WwwkGatekeeper": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": { "invocation_logs": false }
+  }
+}

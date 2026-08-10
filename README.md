@@ -10,8 +10,11 @@
 - 外部原典は CFOS capability でリンクし、接続状態とポータブルデータを分離する。
 - 認証、権限、承認、監査は CFOS に委ね、そのセキュリティ境界に従う。
 
-現在はローカル版 CFOS での MVP 実装を進める段階である。その後
-`cloudflare-os-starter` を使う本番環境へ対応する。
+Phase 1 では、ローカル版 CFOS から `search()`、`read()`、`ingest()` を利用できる
+Owned Source MVP を提供する。静的 Agent Skill は `/wwwk` から読み込む。本番 deploy、
+Linked Source、import/export、UI はまだ対象外である。
+
+ローカル接続と検証方法は [Installation](docs/INSTALLATION.md) を参照する。
 
 ## 独立性と商標
 

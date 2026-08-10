@@ -1,2 +1,7 @@
 .worktrees/
 .tmp/
+node_modules
+node_modules/
+dist/
+.wrangler/
+wrangler.dev.jsonc

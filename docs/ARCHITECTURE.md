@@ -55,7 +55,10 @@ WWWK は、AI 向けの利用方法を 1 つの Agent Skill として提供す�
 - 共通の Skill と、ユーザーごとの非公開データを分離する。
 - 必須の Skill は WWWK 自身が提供し、Context Library の有無に依存させない。
 
-Skill の具体的な内容と、更新などの追加操作 API は未決定とする。
+ローカル MVP では静的な `skills/wwwk/SKILL.md` を package に同梱する。Gatekeeper の
+`getSlashCommandProvider()` が `/wwwk` として Skill を返し、`getAgentCatalog()` は
+Session の用途だけを Agent に提示する。Skill の自動読込み、Skill の更新方式、更新などの
+追加操作 API は未決定とする。
 
 ## 初期ユーザーフロー
 
@@ -511,7 +514,7 @@ ID の参照先、検索、リンクと被リンクのインデックスは、�
 
 ## 未決定事項
 
-- Agent Skill の具体的な内容と、更新などの追加操作 API
+- Agent Skill の自動読込みと更新方式、更新などの追加操作 API
 - 本番用 WWWK package の配布方法
 - インストールスクリプト、アップグレード、アンインストールの詳細
 - 検索件数の上限、高度な検索方式、UI、LLM、バックグラウンド処理
