@@ -142,6 +142,27 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 - ドキュメントは短く保ち、同じ規則を複数箇所へ重複記載しない。
 - 実装が確定事項と異なる場合は、コードに合わせて黙って文書を変えず、先に判断を仰ぐ。
 
+## 公開リポジトリの安全性
+
+- secret、token、cookie、認証ヘッダー、秘密鍵、OAuth 情報、capability、実データを
+  コード、文書、fixture、prompt、ログへ含めない。
+- ユーザー固有の絶対パス、ユーザー名、メールアドレス、account ID、workspace ID、
+  hostname を含めず、環境変数か明らかな例示値を使う。
+- `.env`、`.dev.vars`、`.wrangler`、SQLite database、cache、keyring、ローカル生成状態を
+  commit しない。該当ファイルを導入する場合は先に `.gitignore` を更新する。
+- Source、Evidence、Wiki、承認前 action の全文をデバッグ出力やテスト fixture に使わない。
+- 第三者のコード、文書、asset を追加する前に出典と license の互換性を確認し、必要な
+  copyright、license、NOTICE を保持する。不明なものは取り込まない。
+- Cloudflare の名称は参照目的だけに使い、公式な提携、承認、支援を示唆しない。商標や
+  logo は Cloudflare の公式ガイドラインに従う。
+- 依存 package は現在の要件に必要なものだけを追加し、出典、license、既知の脆弱性を
+  確認する。
+- commit 前に対象ファイル、staged diff、secret と個人情報の有無を確認する。Public への
+  初回 push と release 前は、Git 履歴、author metadata、license、NOTICE も確認する。
+- secret が履歴へ入った場合は、削除 commit だけで済ませず、直ちに利用を停止して失効、
+  履歴除去、再発行の順で対応する。
+- 判断に迷うデータや第三者成果物は commit せず、ユーザーへ確認する。
+
 ## 現在の未決定事項
 
 高度な検索、Source 更新の検知、UI、LLM、バックグラウンド処理、Agent Skill の具体的な
