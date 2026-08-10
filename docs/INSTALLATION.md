@@ -21,14 +21,17 @@ WWWK リポジトリ直下を単一の `gatekeeper-wwwk` package とする。独
 ```text
 wwwk/
 ├── README.md
-├── ARCHITECTURE.md
-├── PRINCIPLES.md
-├── INSTALLATION.md
 ├── AGENTS.md
+├── DEVELOPMENT.md
 ├── .gitignore
 ├── package.json
 ├── tsconfig.json
 ├── wrangler.jsonc
+├── docs/
+│   ├── ARCHITECTURE.md
+│   ├── IMPLEMENTATION_PHASES.md
+│   ├── INSTALLATION.md
+│   └── PRINCIPLES.md
 ├── src/
 │   ├── index.ts
 │   ├── types.d.ts
