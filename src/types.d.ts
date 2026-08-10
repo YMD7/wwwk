@@ -2,7 +2,7 @@
 export type WwwkDocumentType = "source" | "evidence" | "wiki";
 
 /**
- * 個人 Wiki を検索し、文書とその生成元を参照する。
+ * 個人 Wiki を検索し、文書の参照と初期書込みを行う。
  */
 export interface WwwkSession {
   /**
@@ -27,6 +27,26 @@ export interface WwwkSession {
    * 文書が存在しない、または現在利用できない場合は `null` を返す。
    */
   read(id: string): Promise<WwwkDocument | null>;
+
+  /**
+   * 1 つの明示された入力を Source、Evidence、Wiki としてまとめて保存する。
+   *
+   * ID、データ層、生成依存、hash、時刻、所有者、生成メタデータは WWWK が記録する。
+   */
+  ingest(input: WwwkIngestInput): Promise<void>;
+}
+
+/** 初期書込みでまとめて保存する 3 層の draft。 */
+export interface WwwkIngestInput {
+  source: WwwkDocumentDraft;
+  evidence: WwwkDocumentDraft;
+  wiki: WwwkDocumentDraft;
+}
+
+/** Agent が提案する文書の可変部分。 */
+export interface WwwkDocumentDraft {
+  title: string;
+  content: string;
 }
 
 /** 検索に一致した文書の概要。 */

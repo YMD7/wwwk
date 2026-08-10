@@ -80,10 +80,22 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 ## 保存境界
 
 - ユーザーごとに 1 つの SQLite-backed `WwwkLibrary` Durable Object を使用する。
+- 3 層は共通の `documents`、生成依存は `document_inputs` に保存し、層別テーブルを
+  作らない。
 - 3 層データと生成依存リンクは SQL、実行時 capability は同じ DO の embedded KV に
   保存する。
-- 初期 action の 3 層データと生成依存リンクは 1 transaction で保存し、拒否または
-  失敗時に途中状態を残さない。
+- 承認前の draft は Gatekeeper DO の pending action にだけ保持し、拒否時は削除、
+  適用後は 3 文書の ID だけへ縮小する。
+- 初期 action の 3 層データと生成依存リンクは同期 SQL だけを `transactionSync()` で
+  保存し、失敗時に途中状態を残さない。
+- 書込みの再試行は、3 文書と 2 リンクの完全一致時だけ成功とする。部分一致や値の相違は
+  fail-closed とする。
+- revert は action 外の生成依存がない場合だけ、2 リンクと 3 文書を 1 transaction で
+  削除する。
+- LLM 生成、hash 計算、外部 I/O、approval 処理を SQL transaction 内で実行しない。
+- 文書 ID は `crypto.randomUUID()`、content hash は正規化前の UTF-8 本文の SHA-256 と
+  する。
+- 所有者は `WwwkLibrary` と CFOS account の境界で保証し、文書ごとに保存しない。
 - SQLite のファイル、テーブル、`rowid` をポータブル形式へ露出しない。
 - ポータブルな Concept 文書は YAML frontmatter と Markdown 本文で表現し、実行時は
   frontmatter を JSON 互換の値へ正規化する。
@@ -132,9 +144,8 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 
 ## 現在の未決定事項
 
-SQL スキーマ、検索の実装と高度化、Source 更新の検知、UI、LLM、バックグラウンド処理、
-Agent Skill の具体的な内容と更新などの追加操作 API、本番用 package の配布方法、
-アップグレード、
+高度な検索、Source 更新の検知、UI、LLM、バックグラウンド処理、Agent Skill の具体的な
+内容と更新などの追加操作 API、本番用 package の配布方法、アップグレード、
 アンインストールの詳細、`SourceAccess` を発行する CFOS 予約操作の名称、Adapter の
 初期対応範囲、Context Library の専用 Adapter、Linked Source の全文出力を許可する
 具体的な契約、reference-only bundle の詳細、observer 検証 Broker の発行、失効、

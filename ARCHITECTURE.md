@@ -164,7 +164,9 @@ interface WwwkInputRef {
 - 初期実装では自動承認を許可しない。実利用で確認操作が負担になった場合だけ、CFOS の
   action kind 単位の opt-in 自動承認を検討する。
 
-検索エンジン、スコア方式、件数上限などの実装詳細は未決定とする。
+初期検索は `documents` を type と availability で絞り、SQLite の `instr()` で title と
+content を部分一致検索する。初期実装では検索専用テーブルとスコアを持たず、件数上限
+などの小さな実装値は実装時に決める。
 
 ## Source の権限モード
 
@@ -275,8 +277,88 @@ WWWK Gatekeeper の Durable Object 再起動後の再利用を確認した。こ
 - 検索と逆引きのインデックスは、保存データから再生成できる実行データとする。
 - D1、R2、Vectorize は初期依存にせず、実測した必要性が出た場合だけ追加を検討する。
 
-SQLite のスキーマは非公開の実装詳細であり、ポータブル形式にはしない。具体的な
-テーブル、検索方式、マイグレーションは未決定とする。
+SQLite のスキーマは非公開の実装詳細であり、ポータブル形式にはしない。所有者は
+`WwwkLibrary` の分離と CFOS の account 境界で保証し、文書ごとに重複保存しない。
+
+### 最小 SQL スキーマ
+
+```sql
+CREATE TABLE documents (
+  id TEXT PRIMARY KEY,
+  type TEXT NOT NULL
+    CHECK (type IN ('source', 'evidence', 'wiki')),
+  title TEXT NOT NULL
+    CHECK (length(title) > 0),
+  content TEXT NOT NULL
+    CHECK (length(content) > 0),
+  content_hash TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}'
+    CHECK (json_valid(metadata_json)),
+  is_available INTEGER NOT NULL DEFAULT 1
+    CHECK (is_available IN (0, 1)),
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE document_inputs (
+  document_id TEXT NOT NULL
+    REFERENCES documents(id) ON DELETE CASCADE,
+  input_id TEXT NOT NULL
+    REFERENCES documents(id) ON DELETE RESTRICT,
+  PRIMARY KEY (document_id, input_id),
+  CHECK (document_id <> input_id)
+);
+
+CREATE INDEX documents_by_scope
+  ON documents(type, is_available, created_at DESC);
+
+CREATE INDEX document_inputs_by_input
+  ON document_inputs(input_id, document_id);
+
+CREATE TABLE _schema_migrations (
+  version INTEGER PRIMARY KEY,
+  applied_at INTEGER NOT NULL
+);
+```
+
+- Source、Evidence、Wiki は共通の `documents` に保存し、層ごとの重複テーブルを作らない。
+- Evidence から Source、Wiki から Evidence への生成依存だけを `document_inputs` に保存する。
+- ID は `crypto.randomUUID()` で生成し、SQLite の `rowid` に依存させない。
+- `content_hash` は content を正規化せず、UTF-8 の SHA-256 とする。
+- `metadata_json` は正規化したポータブルメタデータに使う。権限や capability の判定には
+  使わない。
+- 文書は不変とし、`updated_at`、soft delete、層別テーブルは初期スキーマへ追加しない。
+- `_schema_migrations` を constructor の初期化時だけ更新する。`PRAGMA user_version` は
+  使用しない。
+
+### 初期書込み transaction
+
+承認前の draft は WWWK Gatekeeper Durable Object の embedded KV に pending action
+として保持し、Library へ保存しない。approval queue への登録に失敗した場合と action
+が拒否された場合は削除し、適用後は全文を残さず 3 文書の ID だけを保持する。
+
+承認後、`WwwkLibrary` は同期 SQL だけを `transactionSync()` 内で実行する。
+
+1. action が持つ 3 文書の ID と生成依存リンクの既存状態を確認する。
+2. 何も存在しなければ Source、Evidence、Wiki と 2 つの生成依存リンクを挿入する。
+3. 3 文書と 2 リンクが完全に一致する場合は、再試行を成功として扱う。
+4. 一部だけ存在する場合や値が異なる場合は例外を投げ、全体を rollback する。
+
+LLM 生成、hash 計算、外部 I/O、approval 処理は transaction の外で行う。CFOS の action
+状態と `WwwkLibrary` は分散 transaction にせず、同じ action の再実行を冪等にすることで
+境界上の失敗を処理する。
+
+### Revert
+
+revert も同期 SQL だけを 1 transaction で実行する。
+
+1. action が作成した 3 文書と 2 リンクが完全に一致することを確認する。
+2. action 外の文書が対象を生成入力として参照していないことを確認する。
+3. 生成依存リンクを削除してから、3 文書を削除する。
+4. 3 文書と 2 リンクがすべて存在しない場合だけ、既に revert 済みとして成功する。
+
+部分一致や外部依存がある場合は fail-closed とする。初期 Ingest は独立した新規 3 層だけを
+作るため、通常は外部依存を持たない。将来の更新 API は、この revert 契約を壊さないように
+別途設計する。
 
 ## ポータブルデータ
 
@@ -381,8 +463,8 @@ Source revision -> Evidence -> Wiki
 - 意味リンクは循環を許容し、検索とナビゲーションに利用する。
 - 意味リンクを生成依存、来歴、権限判定の根拠にしない。
 
-ID の参照先、全文検索、リンクと被リンクのインデックスは、元データから再生成できる
-実行データとする。具体的な検索エンジンや高度な検索方式は未決定とする。
+ID の参照先、検索、リンクと被リンクのインデックスは、元データから再生成できる
+実行データとする。初期検索は上記の部分一致とし、高度な検索方式は未決定とする。
 
 ## 来歴と権限失効
 
@@ -430,12 +512,10 @@ ID の参照先、全文検索、リンクと被リンクのインデックス�
 
 ## 未決定事項
 
-- Agent Skill と Ingest、更新などの操作 API の具体的な内容
+- Agent Skill の具体的な内容と、更新などの追加操作 API
 - 本番用 WWWK package の配布方法
 - インストールスクリプト、アップグレード、アンインストールの詳細
-- `WwwkLibrary` の SQL スキーマと同期方法
-- Ingest、Query、Lint の実行設計
-- 検索インデックスの実装、高度な検索方式、UI、LLM、バックグラウンド処理
+- 検索件数の上限、高度な検索方式、UI、LLM、バックグラウンド処理
 - Source 更新を検知する時期と方法
 - `SourceAccess` を発行する CFOS 予約操作の名称と Adapter の初期対応範囲
 - Context Library から `SourceAccess` を発行する契約と専用 Adapter
