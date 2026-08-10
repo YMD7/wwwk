@@ -9,7 +9,8 @@
 - 将来向けの抽象化、網羅的なテスト、未使用の雛形は追加しない。
 - 速さを理由に、確定済みの不変条件や fail-closed の境界は弱めない。
 
-実装順と各ゴールは [Implementation phases](docs/IMPLEMENTATION_PHASES.md) を正本とする。
+実装順と各ゴールは [Implementation phases](plans/IMPLEMENTATION_PHASES.md) を正本とする。
+`plans/` は実装期間中の計画を置き、計画完了後に削除できる領域とする。
 
 ## ブランチ
 
@@ -42,9 +43,17 @@ git worktree add \
 
 利用中の AI ハーネスに安全な worktree 作成機能がある場合は、それを優先する。
 
+## 一時ファイル
+
+`.tmp/` は Git の追跡対象外とし、いつ削除されても問題ない一時ファイルだけを置く。
+
+- 調査メモ、PR 本文、使い捨ての中間出力に利用する。
+- コード、テスト、tracked な文書から `.tmp/` の存在や内容へ依存しない。
+- secret、capability、個人 Wiki の実データは保存しない。
+
 ## フェーズの進め方
 
-1. `docs/IMPLEMENTATION_PHASES.md` から次の 1 フェーズを選ぶ。
+1. `plans/IMPLEMENTATION_PHASES.md` から次の 1 フェーズを選ぶ。
 2. ゴール、受入条件、対象外を確認し、未決定事項だけをユーザーへ確認する。
 3. 最新の `develop` から作業ブランチと worktree を作る。
 4. ゴールを満たす最小のコードと文書を変更する。

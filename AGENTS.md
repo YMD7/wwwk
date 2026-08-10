@@ -10,7 +10,7 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 ## 作業前に読むもの
 
 1. `DEVELOPMENT.md`
-2. `docs/IMPLEMENTATION_PHASES.md` の現在のフェーズ
+2. `plans/IMPLEMENTATION_PHASES.md` の現在のフェーズ
 3. `docs/PRINCIPLES.md`
 4. `docs/ARCHITECTURE.md`
 5. 導入に関する変更では `docs/INSTALLATION.md`

@@ -23,7 +23,7 @@ Cloudflare および関連する名称とロゴは、Cloudflare, Inc. の商標�
 ## ドキュメント
 
 - [Development](DEVELOPMENT.md)
-- [Implementation phases](docs/IMPLEMENTATION_PHASES.md)
+- [Implementation phases](plans/IMPLEMENTATION_PHASES.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Installation](docs/INSTALLATION.md)
 - [Principles](docs/PRINCIPLES.md)
