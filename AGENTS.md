@@ -4,23 +4,36 @@
 
 名称は `WWWK`、読みは「うーく」とする。
 WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡張である。
-設計と実装は `PRINCIPLES.md` と `ARCHITECTURE.md` に従う。
+設計と実装は `DEVELOPMENT.md`、`docs/PRINCIPLES.md`、
+`docs/ARCHITECTURE.md` に従う。
 
 ## 作業前に読むもの
 
-1. `PRINCIPLES.md`
-2. `ARCHITECTURE.md`
-3. 導入に関する変更では `INSTALLATION.md`
-4. 対象となる CFOS の最新コードと公式資料
+1. `DEVELOPMENT.md`
+2. `docs/IMPLEMENTATION_PHASES.md` の現在のフェーズ
+3. `docs/PRINCIPLES.md`
+4. `docs/ARCHITECTURE.md`
+5. 導入に関する変更では `docs/INSTALLATION.md`
+6. 対象となる CFOS の最新コードと公式資料
 
 ## 作業原則
 
+- ローカルで使える最小の縦切りを最優先し、現在のフェーズに直接必要な実装だけを行う。
+- テストは現在のゴール、変更した契約、セキュリティ境界を確認する最小範囲に絞る。
 - KISS と YAGNI を守り、合意済みの範囲だけを変更する。
 - 一度に一つの設計課題を扱い、未決定事項を同時に確定しない。
 - 推測を設計判断にせず、一次情報とコードで確認する。
 - 新しい責務、抽象層、状態、依存関係は、現在の要件で必要な場合だけ追加する。
 - 設計変更は実装前に提案し、合意後に文書とコードを更新する。
 - 既存の確定事項を変更する場合は、理由と影響範囲を明示する。
+
+## 開発フロー
+
+- `main <- develop <- 作業ブランチ` の順で、必ず PR を通して統合する。
+- 作業ブランチは最新の `develop` から作成し、`.worktrees/` 配下の専用 worktree で扱う。
+- `main` と `develop` へ直接実装を commit または push しない。
+- 1 つの作業ブランチでは、現在の 1 フェーズのゴールだけを扱う。
+- 詳細な作成、検証、統合、後片付けの手順は `DEVELOPMENT.md` に従う。
 
 ## CFOS との境界
 

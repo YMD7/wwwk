@@ -40,7 +40,7 @@ WWWK は独立した Gatekeeper Worker とし、CFOS から `GATEKEEPER_WWWK` se
 で接続する。ローカル版と本番版で中核実装を共通化し、本番対応はローカル検証後に行う。
 WWWK リポジトリ直下を単一の `gatekeeper-wwwk` package とし、独自の `packages/` 階層や
 monorepo は作らない。ローカルでは CFOS の `packages/gatekeeper-wwwk` から WWWK へ
-link する。詳細は `INSTALLATION.md` に記録する。
+link する。詳細は [Installation](INSTALLATION.md) に記録する。
 
 ## エージェントとの境界
 
