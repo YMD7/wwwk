@@ -65,6 +65,9 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 - 3 層データと生成依存リンクは SQL、実行時 capability は同じ DO の embedded KV に
   保存する。
 - SQLite のファイル、テーブル、`rowid` をポータブル形式へ露出しない。
+- ポータブルな Concept 文書は YAML frontmatter と Markdown 本文で表現し、実行時は
+  frontmatter を JSON 互換の値へ正規化する。
+- import/export は論理値を保持し、YAML のコメントや項目順の一致を要件にしない。
 - export と空の `WwwkLibrary` への import の往復で、論理データの一致を検証する。
 - D1、R2、Vectorize、外部 Workers KV は、実測した必要性なしに追加しない。
 

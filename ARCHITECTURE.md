@@ -4,7 +4,7 @@
 ## 位置づけ
 
 WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡張である。
-本書は確定した責務とデータ境界だけを記録する。保存基盤、UI、検索方式などは未決定とする。
+本書は確定した責務とデータ境界だけを記録する。UI、検索方式などは未決定とする。
 
 ## CFOS との境界
 
@@ -180,6 +180,29 @@ bundle/
 - `export -> 空の WwwkLibrary へ import` の往復で、論理データと生成依存リンクが
   一致することをテストする。
 
+### OKF との対応
+
+ポータブルな Concept 文書は、OKF v0.2 を参考に、YAML frontmatter と Markdown 本文で
+表現する。OKF は交換形式として利用し、実行時ストレージにはしない。
+
+| ポータブル形式 | 実行時表現 |
+| --- | --- |
+| `id`、`type`、`title` | 検索可能な文書フィールド |
+| Markdown 本文 | 文書本文 |
+| `generated`、`resource`、revision など | 正規化したメタデータ |
+| `sources` | 生成依存リンク |
+
+- import 時は frontmatter を解析し、JSON 互換の値へ正規化して保存する。
+- export 時は正規化した値と生成依存リンクから frontmatter を再構成する。
+- Evidence の `sources` は Source revision、Wiki の `sources` は Evidence を参照する。
+- 未知の frontmatter 項目は値を保持する。コメント、項目順、引用符などの表記は
+  往復一致の対象にしない。
+- `sources` はポータブルな来歴であり、アクセス権限の正本にはしない。
+- `is_available`、capability、接続状態などの実行時情報は frontmatter に含めない。
+
+OKF v0.2 の全機能を採用することや、任意の OKF bundle を取り込めることは保証しない。
+WWWK の厳密な適合プロファイルとバージョン互換方針は、利用要件が固まってから決める。
+
 依存方向は一方向に固定する。
 
 ```text
@@ -254,10 +277,10 @@ ID の参照先、全文検索、リンクと被リンクのインデックス�
 
 - `manifest.yaml` はフォーマット名とバージョンを持つ。
 - 各データは少なくとも `id` と `type` を持つ。
-- 派生データは入力元を参照する。
+- 派生データは、OKF の `sources` で入力元を参照する。
 - Source は revision または content hash で参照時点を識別できる。
-- 生成物は生成者と生成日時を保持する。
-- Concept 文書は Markdown と YAML frontmatter を基本とし、OKF との互換性を目標とする。
+- 生成物は OKF の `generated` で生成者と生成日時を保持する。
+- Concept 文書は Markdown と YAML frontmatter を基本とする。
 
 厳密な YAML スキーマと OKF 適合プロファイルは、利用要件が固まってから決める。
 
