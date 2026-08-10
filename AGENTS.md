@@ -38,6 +38,10 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
   Object へ直接依存しない。
 - Context Library との連携は、将来の任意 Source provider Adapter として扱う。
 - WWWK のデータや frontmatter を権限の正本にしない。
+- 共同利用者の外部 verifier、認証情報、capability を WWWK へ渡さない。
+- 共有 Gadget の observer 検証は、CFOS が発行する限定 Broker に委ねる。
+- Broker は、CFOS の信頼済み登録に結び付いた非ポータブルな opaque
+  `sourceAccessId` だけを受け取り、成功または拒否を返す。
 - CFOS のセキュリティ境界を迂回する設計を禁止する。
 
 ## 導入方針
@@ -98,6 +102,13 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
   bundle に含めない。
 - 権限失効の判定と影響範囲の特定を LLM に任せない。
 - Source 更新時は新しい revision を作り、影響する派生データだけを再生成する。
+- `WwwkLibrary` は所有者専用とし、共同利用者へ検索や直接参照を許可しない。
+- 共有 Gadget の observation は、生成依存を Source revision まで辿り、共同利用者が
+  全 Linked Source の検証に成功した場合だけ許可する。
+- Owned Source、拒否、未登録、vendor 不一致、障害、不明な依存は fail-closed とする。
+- observer が Gadget を開くたびに生成依存の閉包を再検証する。
+- 生成依存へ新しい Source が加わった場合は既存 observer を再検証し、失敗時は
+  `excludeObservers` を通して CFOS に observation を遮断させる。
 - ポータブルデータへ秘密情報や実行時 capability を含めない。
 
 ## ドキュメントとコード
@@ -113,5 +124,7 @@ SQL スキーマ、検索の実装と高度化、Source 更新の検知、UI、L
 Agent Skill と Ingest、更新などの操作 API、本番用 package の配布方法、アップグレード、
 アンインストールの詳細、`SourceAccess` を発行する CFOS 予約操作の名称、Adapter の
 初期対応範囲、Context Library の専用 Adapter、Linked Source の全文出力を許可する
-具体的な契約、reference-only bundle の詳細は未決定である。必要になるまで選定や
+具体的な契約、reference-only bundle の詳細、observer 検証 Broker の発行、失効、
+account 選択、Gatekeeper への受け渡し、`sourceAccessId` の登録、Owned Source の
+明示的な共有ポリシー、Wiki の直接共有機能は未決定である。必要になるまで選定や
 雛形作成を行わない。

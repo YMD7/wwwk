@@ -174,6 +174,42 @@ interface SourceAccessDescription {
 
 予約操作の名称と Adapter の初期対応範囲は未決定とする。
 
+## 共有 Gadget の observer 検証
+
+`WwwkLibrary` は所有者専用のままとし、共同利用者へ検索や直接参照を許可しない。一方、
+WWWK の情報を使った Gadget は、共同利用者が生成元の全 Source を現在参照できる場合に
+限り共有できる。
+
+- 権限判定には、Wiki から Evidence、Source revision まで辿った生成依存の閉包を使う。
+- Linked Source は、CFOS が Source ごとの同一 vendor verifier で検証する。
+- verifier、認証情報、外部 capability を WWWK へ渡さない。WWWK は CFOS が発行する
+  observer 検証 Broker から成功または拒否だけを受け取る。
+- 全 Source の検証成功時だけ observer を許可する。拒否、未登録、vendor 不一致、障害、
+  不明な依存は fail-closed とする。
+- Owned Source は既定で共有を拒否する。明示的な共有ポリシーは必要になるまで定義しない。
+- observer が Gadget を開くたびに生成依存の閉包を再検証する。
+- 新しい Source が生成依存へ加わった場合は再検証する。失敗した observer は
+  `excludeObservers` に指定し、CFOS に observation を遮断させる。
+- Broker capability と observer ごとの検証済み Source 集合は、共有 Gadget に属する
+  WWWK Gatekeeper の非ポータブルな実行状態として保持する。
+
+Broker への要求は、CFOS の信頼済み登録に結び付いた非ポータブルな opaque
+`sourceAccessId` で表す。ID や登録情報を frontmatter、export、権限の正本にしない。
+Broker の最小の意味は次のとおりとする。
+
+```ts
+interface ObserverVerificationBroker {
+  verifyLinkedSources(sourceAccessIds: string[]): Promise<void>;
+}
+```
+
+Workers RPC と SQLite-backed Durable Object を用いたローカル PoC で、複数 vendor の
+全件検証、fail-closed、追加 Source の再検証、Broker capability の embedded KV 保存と
+WWWK Gatekeeper の Durable Object 再起動後の再利用を確認した。これは文書単位で ACL
+を検証できる Source の実現可能性を示すものであり、外部サービスの読取権限を派生物の
+再共有許可と同一視しない。最終的な Broker の発行、失効、account 選択、Gatekeeper
+への受け渡し契約は未決定とする。
+
 ## 実行時ストレージ
 
 ユーザーごとに 1 つの SQLite-backed `WwwkLibrary` Durable Object を割り当てる。
@@ -349,6 +385,9 @@ ID の参照先、全文検索、リンクと被リンクのインデックス�
 - `SourceAccess` を発行する CFOS 予約操作の名称と Adapter の初期対応範囲
 - Context Library から `SourceAccess` を発行する契約と専用 Adapter
 - Linked Source の全文出力を許可する具体的な契約と reference-only bundle の詳細
-- Wiki の共有機能
+- Broker の発行、失効、account 選択、Gatekeeper への受け渡し契約
+- `sourceAccessId` の発行と信頼済み登録の具体的な実装
+- Owned Source の明示的な共有ポリシーと Wiki の直接共有機能
 
-初期スコープでは Wiki は個人専用かつ非公開とする。
+初期スコープでは `WwwkLibrary` の直接利用は個人専用かつ非公開とする。共有 Gadget
+からの派生 observation だけを、上記の observer 検証に従って許可する。
