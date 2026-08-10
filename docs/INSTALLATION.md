@@ -29,9 +29,10 @@ wwwk/
 ├── wrangler.jsonc
 ├── docs/
 │   ├── ARCHITECTURE.md
-│   ├── IMPLEMENTATION_PHASES.md
 │   ├── INSTALLATION.md
 │   └── PRINCIPLES.md
+├── plans/
+│   └── IMPLEMENTATION_PHASES.md
 ├── src/
 │   ├── index.ts
 │   ├── types.d.ts
@@ -42,6 +43,8 @@ wwwk/
 ```
 
 - `types.d.ts` は Agent へ公開する Session API を定義する。
+- `plans/` は実装中だけ必要な計画を置き、完了後に削除できる。
+- `.tmp/` はローカルで必要時に作成する追跡対象外の一時領域とする。
 - `types.txt` は `types.d.ts` への symbolic link とする。
 - `index.ts` は最初は分割せず、実際に責務が増えた場合だけ分割する。
 - `package.json` の name は `gatekeeper-wwwk` とし、当面は `private: true` とする。
