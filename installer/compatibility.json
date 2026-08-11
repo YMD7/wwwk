@@ -1,0 +1,16 @@
+{
+  "format": 1,
+  "starter": {
+    "revision": "93f14dfd68ed1c218d2a7c2168753a6d9b22e145",
+    "lockfile": "compatibility/starter-93f14df-cfos-8b08672.pnpm-lock.yaml",
+    "patch": "patches/starter-93f14df-cfos-cwd.patch"
+  },
+  "cfos": {
+    "baseRevision": "8b08672050e6957987a87b5f9cab2801ba89b42c",
+    "companionRevision": "7964294",
+    "patch": "patches/cfos-8b08672-7964294.patch"
+  },
+  "wwwk": {
+    "baseRevision": "8ba113e8b5c74f9722ed3e6cdb8ad515e86a2be7"
+  }
+}

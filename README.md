@@ -10,14 +10,19 @@
 - 外部原典は CFOS capability でリンクし、接続状態とポータブルデータを分離する。
 - 認証、権限、承認、監査は CFOS に委ね、そのセキュリティ境界に従う。
 
-ローカル版 CFOS から `search()`、`read()`、`ingest()` を利用できる Owned Source MVP
-を提供する。静的 Agent Skill は `/wwwk` から読み込む。Phase 2 では、3 層と生成依存を
-Markdown と YAML frontmatter の Bundle v1 で往復できる Core portability を追加した。
-Phase 3では、CFOSのstable Brokerを通じたLinked Notion Pageの取込みを追加した。
-handleは実行時状態として保存するがexportしない。外部bindingと一時Sessionは保存しない。
-bundleを運ぶUI、CLI、archive、本番deploy、Linked Sourceのexportはまだ対象外である。
+ローカル版 CFOS から `search()`、`read()`、`ingest()` を利用できる。静的 Agent Skill は
+`/wwwk` から読み込む。3 層と生成依存は Markdown と YAML frontmatter の Bundle v1 で
+往復できる。Linked Notion Page は CFOS の stable Broker を通して取り込み、共有 Gadget
+では生成元の現在の参照権限を CFOS が検証する。handle は実行時状態として保存するが
+export せず、外部 binding と一時 Session も保存しない。
 
-ローカル接続と検証方法は [Installation](docs/INSTALLATION.md) を参照する。
+利用者へ特定の CFOS fork を要求せず、対応する公式 CFOS と
+`cloudflare-os-starter`へ、version 固定の installer が必要な差分を一時的に適用する方針を
+採用する。Phase 5では固定revision向けのpatch、互換lockfile、binding生成PoCを追跡している。
+利用者向けinstallerとCloudflare上での本番導入は未実装である。bundleを運ぶUI、CLI、archive、
+Linked Sourceのexportもまだ対象外とする。
+
+導入契約と現在の実装状況は [Installation](docs/INSTALLATION.md) を参照する。
 
 ## 独立性と商標
 

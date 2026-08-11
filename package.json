@@ -7,7 +7,8 @@
   "scripts": {
     "build": "tsc",
     "types:check": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:installer-poc": "node --test scripts/installer-poc.test.mjs"
   },
   "dependencies": {
     "capnweb": "^0.8.0",

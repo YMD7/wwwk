@@ -2,189 +2,172 @@
 
 ## 状態
 
-本書は、確定した導入方針と現時点で判明している手順を記録する。
-Phase 1 では、clone した CFOS のローカル開発サーバーへ symbolic link で接続する。
-クラウドへの deploy は行わない。
+WWWK の利用者向け導入方式は、version 固定の installer とする。特定の CFOS または
+`cloudflare-os-starter` fork は要求しない。利用者向けinstallerは未実装である。Phase 5のPoCは
+固定revision向けのpatch、互換lockfile、双方向service bindingの生成値を追跡し、次フェーズの
+実装入力にする。
 
-## 対応順序
+現在の symbolic link 手順は内部的なローカル開発専用である。利用者向けの install / uninstall
+契約にはしない。
 
-1. clone した CFOS へ組み込み、ローカルで開発と検証を行う。
-2. 検証後に、`cloudflare-os-starter` を使う本番環境へ対応する。
+## 対象
 
-両環境で `gatekeeper-wwwk` の中核実装を共通化する。本番対応に必要な処理を、
-ローカル検証より先に実装しない。
+installer は、次の 2 つの環境へ同じ `gatekeeper-wwwk` を導入する。
 
-## Package 構成
+- clone した公式 CFOS を使うローカル環境
+- 公式 `cloudflare-os-starter` を使う Cloudflare deployment
 
-WWWK リポジトリ直下を単一の `gatekeeper-wwwk` package とする。独自の `packages/`
-階層や monorepo は作らない。
+初期版は、検証済みの Starter、CFOS、WWWK、companion patch の 1 組だけを対応対象にする。
+任意 version への自動適用、競合解決、upgrade 自動化は行わない。
+
+Phase 5の対応組とraw patchは[installer/](../installer/)で追跡する。StarterはCFOSを自身の
+project cwdでbuildする最小互換patchも必要とする。両repositoryの公式checkoutは変更せず、
+次フェーズで一時worktreeへだけ適用する。
+
+## 導入モデル
+
+WWWK は独立した Gatekeeper Worker であり、Workshop の `GATEKEEPER_WWWK` service binding
+から接続する。Linked Source には逆方向の `CFOS_SOURCE_ACCESS_BROKER` binding も必要になる。
+
+公式 CFOS の現行契約だけでは、stable Broker と共有 Gadget の observer 検証を表現できない。
+そのため、installer は WWWK repository で追跡された companion patch を一時 worktree の
+公式 CFOS へ適用する。
 
 ```text
-wwwk/
-├── README.md
-├── AGENTS.md
-├── DEVELOPMENT.md
-├── .gitignore
-├── package.json
-├── pnpm-lock.yaml
-├── tsconfig.json
-├── vitest.config.ts
-├── wrangler.jsonc
-├── worker-configuration.d.ts
-├── skills/
-│   └── wwwk/
-│       └── SKILL.md
-├── docs/
-│   ├── ARCHITECTURE.md
-│   ├── INSTALLATION.md
-│   └── PRINCIPLES.md
-├── plans/
-│   └── IMPLEMENTATION_PHASES.md
-├── src/
-│   ├── index.ts
-│   ├── env.d.ts
-│   ├── text-modules.d.ts
-│   ├── types.d.ts
-│   └── types.txt -> types.d.ts
-└── __tests__/
-    ├── worker.ts
-    └── wwwk.test.ts
+利用者の公式 checkout
+        |
+        | 読取り
+        v
+  installer の一時 worktree
+  - 対応 revision を検証
+  - companion patch を適用
+  - WWWK package と binding を追加
+  - test / build / dry-run
+        |
+        +--> ローカル実行
+        |
+        `--> 同じ Workshop Worker へ再デプロイ
 ```
 
-- `types.d.ts` は Agent へ公開する Session API を定義する。
-- `plans/` は実装中だけ必要な計画を置き、完了後に削除できる。
-- `.tmp/` はローカルで必要時に作成する追跡対象外の一時領域とする。
-- `types.txt` は `types.d.ts` への symbolic link とする。
-- `index.ts` は最初は分割せず、実際に責務が増えた場合だけ分割する。
-- `package.json` の name は `gatekeeper-wwwk` とし、当面は `private: true` とする。
-- `wrangler.jsonc` の Worker name は `gatekeeper-wwwk` とする。
-- `tsconfig.json` は配置先の相対パスに依存させない。
-- テストは自動 provision、singleton、個人専用境界を優先する。
-- UI、OAuth、hooks、background worker は初期構成へ含めない。
+利用者の Git 履歴と作業ツリーには変更を残さない。Cloudflare 上の Workshop は、WWWK 対応
+コードを含む新しい Worker version へ再デプロイする。これは実行コードの更新であり、稼働中の
+Worker への動的な plugin 注入ではない。
 
-Agent Skill は `skills/wwwk/SKILL.md` に同梱し、CFOS の Slash Command Provider から
-`/wwwk` として読み込む。自動読込みは行わない。
+## Installer の責務
 
-Phase 3 の Linked Notion Page には、CFOS 側に `SourceAccessBroker` entrypoint と
-`CFOS_SOURCE_ACCESS_BROKER` service bindingを含む対応revisionが必要である。WWWKは
-opaque handleだけを保存し、このローカルCFOS側のBrokerなしにはLinked Sourceを読めない。
+installer は次の範囲だけを担う。
+
+1. 対象 repository、revision、設定、必要な tool を検証する。
+2. 一時 worktree を作り、追跡された対応 patch だけを適用する。
+3. WWWK Worker と双方向の service binding を組み込む。
+4. 適用差分、Worker identity、保存資源、実行予定を秘密情報なしで示す。
+5. test、build、Wrangler dry-run が成功した場合だけローカル実行または deploy へ進む。
+6. 失敗時は既存 deployment と利用者の checkout を変更せず終了する。
+7. 完了後に一時生成物を削除する。
+
+次の場合は fail-closed で停止する。
+
+- 対象 revision が対応表と一致しない。
+- patch が完全一致で適用できない。
+- 既存 deployment の Worker または保存資源を一意に確認できない。
+- test、build、dry-run のいずれかが失敗する。
+- secret や capability を設定、差分、ログへ出力する必要がある。
+
+installer は認証、権限、capability、approval、監査を実装しない。これらは統合後も CFOS の
+責務とする。
+
+## WWWK Package
+
+WWWK repository 直下を単一の `gatekeeper-wwwk` package とする。独自の monorepo や
+CFOS package のコピーは作らない。
+
+- `src/` はローカルと本番で共通の Worker 実装を持つ。
+- `skills/wwwk/SKILL.md` は `/wwwk` から読み込む Agent Skill である。
+- `wrangler.jsonc` は WWWK の基底設定であり、installer が実際の Workshop Worker 名を使う
+  一時的な本番設定を生成する。
+- companion patch は対象 CFOS revision と対応付け、WWWK repository で review できる形で
+  追跡する。
+- secret、token、account ID、hostname、実データを package や patch に含めない。
 
 ## ローカル導入
 
-### 方式の位置づけ
+初期の installer は、利用者が指定した公式 CFOS clone から専用の integration worktree を
+作る。そこへ companion patch と WWWK package を接続し、既存の CFOS 開発サーバーで起動する。
 
-symbolic link はローカル開発専用の接続方式とする。CFOS は
-`packages/gatekeeper-*` を走査して Gatekeeper を検出する。WWWK の依存関係は WWWK
-自身へ導入し、CFOS workspace の内部 package へ依存しない。
+installer の実装前は、開発者だけが CFOS の `packages/gatekeeper-wwwk` から WWWK へ
+symbolic link を作成して検証できる。この手順は互換契約ではなく、対応 revision の確認なしに
+一般利用者へ案内しない。
 
-`pnpm link` は package を `node_modules` へ接続する仕組みであり、CFOS の Gatekeeper
-検出条件を満たさないため使用しない。symbolic link を本番配布方式や恒久的な plugin
-機構とは見なさない。本番導入と一般配布の方式は、ローカル検証後に決定する。
+ローカル installer の実装では、次を実証してから保存場所を確定する。
 
-### 前提
+- 利用者の CFOS checkout を変更しないこと
+- 再実行後も同じ WWWK / CFOS ローカルデータを利用できること
+- 接続解除後も WWWK データを保持できること
+- CFOS 全体の `.wrangler` state を削除せずに WWWK だけを扱えること
 
-- 対象の CFOS が clone 済みである。
-- CFOS を `pnpm run-local` で起動できる。
-- 対象の CFOS revision と WWWK の互換性が確認されている。
+## Cloudflare OS Starter への導入
 
-### 配置
+Starter 対応では、既存の deployment identity を維持する。
 
-CFOS の開発サーバーは、`packages/gatekeeper-*` にある `wrangler.jsonc` を持つ package
-を検出する。WWWK は次の形で認識させる。
+- Cloudflare account
+- Workshop、Context、その他既存 Worker の名前
+- Durable Object class と namespace
+- KV namespace ID
+- R2 bucket 名
+- Access と管理者の設定
 
-```text
-cloudflare-os/
-└── packages/
-    └── gatekeeper-wwwk/
-        └── wrangler.jsonc
-```
+installer は、WWWK Worker を先にデプロイし、成功後に `GATEKEEPER_WWWK` を持つ Workshop
+version を同じ Worker 名へデプロイする。WWWK の
+`CFOS_SOURCE_ACCESS_BROKER` は、その Workshop の `SourceAccessBroker` entrypoint を参照する。
 
-WWWK リポジトリは CFOS から独立して管理し、ローカルでは symbolic link で接続する。
-利用者固有の配置を前提にせず、次の変数で各リポジトリのルートを表す。
+新規 installation と既存 Starter deployment への追加は、同じ統合処理を使う。既存環境では
+自動 provision に任せず、利用中の保存資源を一意に確認して再利用する。確認できない場合は
+新しい資源を作らず停止する。
 
-- `$CFOS_ROOT`: CFOS リポジトリのルート
-- `$WWWK_ROOT`: WWWK リポジトリのルート
-
-```sh
-ln -s "$WWWK_ROOT" \
-  "$CFOS_ROOT/packages/gatekeeper-wwwk"
-```
-
-### 手順
-
-1. 対応する CFOS revision を準備し、WWWK を接続する前に `pnpm run-local` で起動を
-   確認して停止する。
-2. WWWK のルートで `pnpm install`、`pnpm run types:check`、`pnpm test` を実行する。
-3. CFOS の `packages/gatekeeper-wwwk` から WWWK へ symbolic link を作る。
-4. CFOS のルートで `node run-dev-server.js --serve-frontend-assets` を実行する。
-5. `GATEKEEPER_WWWK` binding と `GatekeeperVendor` の自動接続を確認する。
-6. `/wwwk` で Agent Skill を読み込み、`ingest()`、`search()`、`read()` を検証する。
-
-CFOS の開発サーバーが Gatekeeper の検出と binding 生成を担うため、ローカル導入では
-Cloudflare アカウントへのデプロイを必要としない。WWWK の依存関係は CFOS workspace
-ではなく WWWK 自身へ導入する。`WwwkLibrary` は SQLite-backed Durable Object として
-動作し、ローカルデータは CFOS の `.wrangler/state` 配下へ保存される。
+公式 hosted deploy など、対応する Starter checkout と設定を確認できない deployment は、
+初期対象に含めない。
 
 ## アンインストール
 
-アンインストールは、接続解除とデータ消去を分離する。
+アンインストールは接続解除とデータ消去を分離する。
 
-### ローカルでの接続解除
+### 接続解除
 
-標準のアンインストールでは WWWK のデータを保持する。
+標準のアンインストールは、test、build、dry-run が成功した構成だけをデプロイし、次の
+状態へ戻す。
 
-1. CFOS のローカルサーバーを停止する。
-2. 対象が symbolic link であることを確認する。
-3. `packages/gatekeeper-wwwk` の symbolic link だけを外す。
-4. `pnpm run-local` で CFOS を起動する。
-5. `GATEKEEPER_WWWK` binding が生成されないことを確認する。
+- Workshop は `GATEKEEPER_WWWK` と companion patch を含まない公式構成である。
+- WWWK Worker は `CFOS_SOURCE_ACCESS_BROKER` を外すが、同じ Durable Object class と
+  データを保持する。
+- CFOS から WWWK へ新しい Session を開始できない。
 
-```sh
-test -L "$CFOS_ROOT/packages/gatekeeper-wwwk"
-unlink "$CFOS_ROOT/packages/gatekeeper-wwwk"
-```
+双方向 binding と Workshop entrypoint を安全に外す具体的なデプロイ順は、Phase 7 で実際の
+Cloudflare binding contractを確認して確定する。推測した順序をinstallerへ実装しない。
 
-WWWK リポジトリ自体の削除はアンインストールに含めない。
+WWWK Worker、`WwwkLibrary`、portable bundle、WWWK repository は削除しない。再接続時は、
+同じ WWWK Worker とデータを利用できるようにする。
 
 ### データの完全消去
 
-完全消去は、明示的な破壊操作として標準のアンインストールから分離する。実行前に
-ポータブルデータの export を推奨する。
+完全消去は、別の明示的な破壊操作とする。実行前に export の要否、対象 Worker、対象
+Durable Object namespace を確認する。CFOS 本体、ほかの Gatekeeper、共有 KV / R2、
+`.wrangler` state 全体を削除してはならない。
 
-CFOS の `.wrangler/state` 全体は削除しない。CFOS 本体やほかの Gatekeeper のローカル
-データも含まれるためである。Phase 1 では CFOS の account revoke 契約を通して WWWK の
-文書と生成依存リンクを削除し、再作成を防ぐ永久失効 marker だけを残す。ローカル状態から
-WWWK の物理領域だけを削除する運用手順は、本番の接続管理と合わせて後続で決定する。
+WWWK データだけを安全に消去する具体的な Cloudflare / ローカル手順は未確定であり、
+installer の接続解除が成立してから別フェーズで実装する。
 
-## 本番対応
+## Upgrade
 
-ローカル検証後に、`cloudflare-os-starter` の外部 package として WWWK を追加する。
-上流の `cloudflare-os` submodule は直接変更しない。
+初期版は対応 revision を 1 組に固定する。同じ組への再実行は安全にできるようにするが、
+新しい公式 CFOS / Starter への自動 upgrade は行わない。
 
-本番導入では、少なくとも次の順序が必要になる。
-
-1. WWWK Worker と必要な保存資源を準備する。
-2. WWWK Worker をデプロイする。
-3. Workshop へ `GATEKEEPER_WWWK` service binding を追加する。
-4. Workshop Worker を再デプロイする。
-5. ユーザー単位の分離、Agent からの利用、データ永続化を検証する。
-
-具体的な設定とコマンドは、ローカル検証後に決定する。
-
-## 未決定事項
-
-- 本番用 WWWK package の配布方法
-- 対応する CFOS revision の管理方法
-- インストールの自動化と再実行時の挙動
-- 本番用の設定項目と検証方法
-- アップグレード方法
-- WWWK データだけを対象とする完全消去の方法
-- 本番環境での接続解除と完全消去の手順
+対応 version を増やす場合は、上流差分、CFOS 契約、companion patch、Starter の基底設定を
+review し、既存の受入条件を通した新しい対応組として追加する。patch が適用できるという理由
+だけで互換性を判断しない。
 
 ## 参照
 
-- [CFOS: Run locally](https://github.com/cloudflare/cloudflare-os#run-locally)
-- [CFOS: Gatekeeper discovery](https://github.com/cloudflare/cloudflare-os/blob/main/run-dev-server.js)
+- [CFOS](https://github.com/cloudflare/cloudflare-os)
 - [Cloudflare OS Starter](https://github.com/cloudflare/cloudflare-os-starter)
-- [pnpm: pnpm link](https://pnpm.io/cli/link)
-- [Cloudflare Workers: Adding local data](https://developers.cloudflare.com/workers/local-development/local-data/)
+- [Workers versions and deployments](https://developers.cloudflare.com/workers/versions-and-deployments/)
+- [Durable Object class exports](https://developers.cloudflare.com/durable-objects/reference/durable-objects-migrations/)

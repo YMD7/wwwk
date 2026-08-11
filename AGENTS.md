@@ -69,8 +69,18 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 - ローカル検証後に、`cloudflare-os-starter` を使う本番環境へ対応する。
 - WWWK の中核を両環境で共通化し、ローカル専用の前提を持ち込まない。
 - 本番対応を理由に、ローカル検証に不要な仕組みを先行実装しない。
+- 利用者へ WWWK プロジェクトまたは第三者の CFOS / Starter fork を必須にしない。
+- 対応する公式 revision へ version 固定の installer で必要な差分を適用する。
+- installer は利用者の作業ツリーを直接変更せず、一時 worktree で統合、検証、build を行う。
+- 対応 revision、patch、生成設定を実行前に検証し、未知の version や競合は fail-closed とする。
+- CFOS の公開拡張境界で表現できない companion 差分だけを、追跡された監査可能な patch と
+  して適用する。upstream の契約で代替できる差分は削除する。
+- 本番では同じ Worker 名、Durable Object class、KV、R2 などの identity を維持し、
+  WWWK 対応 version として再デプロイする。稼働中の Worker へコードを動的注入しない。
+- 標準アンインストールは接続解除と公式構成への再デプロイだけを行い、WWWK のデータを
+  保持する。データ消去は別の明示的な破壊操作とする。
 - リポジトリ直下を単一の `gatekeeper-wwwk` package とし、monorepo 化しない。
-- ローカルでは、CFOS の `packages/gatekeeper-wwwk` から WWWK へ link する。
+- 手動の symbolic link は開発中の内部手順に限定し、利用者向け導入契約にしない。
 - Session API は `search()`、`read()`、`ingest()` に限定し、未合意の操作を追加しない。
 - UI、OAuth、hooks、background worker は、必要性が確定するまで追加しない。
 
@@ -181,6 +191,10 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 - commit 前に対象ファイル、staged diff、secret と個人情報の有無を確認する。Public への
   初回 push と release 前は、Git 履歴、author metadata がユーザーの公開意図と一致する
   こと、license、NOTICE も確認する。
+- installer は secret、token、認証済み設定の値、利用者のデータを patch、生成物、実行計画、
+  ログへ含めない。外部 repository の未追跡 script や未知の patch を実行しない。
+- installer が適用する CFOS 差分は WWWK repository で追跡し、対象 revision と内容を
+  review できる状態にする。ネットワークから取得した任意コードをそのまま適用しない。
 - secret が履歴へ入った場合は、削除 commit だけで済ませず、直ちに利用を停止して失効、
   履歴除去、再発行の順で対応する。
 - 判断に迷うデータや第三者成果物は commit せず、ユーザーへ確認する。
@@ -188,8 +202,7 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 ## 現在の未決定事項
 
 高度な検索、Source 更新の検知、UI、LLM、バックグラウンド処理、Agent Skill の具体的な
-内容と更新などの追加操作 API、本番用 package の配布方法、アップグレード、
-アンインストールの詳細、Context Library の専用 Adapter、Linked Source の全文出力を許可する
-具体的な契約、reference-only bundle の詳細、Owned Source の明示的な共有ポリシー、
-Wiki の直接共有機能は未決定である。必要になるまで選定や
-雛形作成を行わない。
+内容と更新などの追加操作 API、複数の CFOS / Starter revision への対応、upgrade 自動化、
+データ完全消去の具体的な手順、Context Library の専用 Adapter、Linked Source の全文出力を
+許可する具体的な契約、reference-only bundle の詳細、Owned Source の明示的な共有ポリシー、
+Wiki の直接共有機能は未決定である。必要になるまで選定や雛形作成を行わない。
