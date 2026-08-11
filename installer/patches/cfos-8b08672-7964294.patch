@@ -1,0 +1,967 @@
+diff --git a/packages/workshop-backend/__tests__/source-access.test.ts b/packages/workshop-backend/__tests__/source-access.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..9cf04be14b08934240ae507ecbf34194a8c2bbbe
+--- /dev/null
++++ b/packages/workshop-backend/__tests__/source-access.test.ts
+@@ -0,0 +1,294 @@
++import { describe, expect, it, vi } from "vitest";
++import { env } from "cloudflare:workers";
++import { runInDurableObject } from "cloudflare:test";
++import {
++  LinkedSourceApprovalQueueImpl,
++  SourceAccessBroker,
++  linkedSourceHandlePropsForCaller,
++} from "../src/overseer.js";
++import type { OverseerDurableObject } from "../src/overseer.js";
++
++declare module "cloudflare:workers" {
++  interface ProvidedEnv {
++    TEST_OVERSEER: DurableObjectNamespace<OverseerDurableObject>;
++  }
++}
++
++const handle = "cfosls1_abcdef_11111111-1111-4111-8111-111111111111";
++
++function makeBroker(overseer: {
++  describeLinkedSourceHandle: (nonce: string) => Promise<object | null>;
++  openLinkedSourceHandle: (nonce: string) => Promise<object | null>;
++  registerSourceAccessHandle: (nonce: string) => string | null;
++}): SourceAccessBroker {
++  const broker = Object.create(SourceAccessBroker.prototype) as SourceAccessBroker;
++  Object.assign(broker, {ctx: {exports: {OverseerDurableObject: {
++    idFromString: (id: string) => id,
++    get: () => overseer,
++  }}}});
++  return broker;
++}
++
++describe("Linked Source handles", () => {
++  it("issues handles only to an agent for a gatekeeper binding", () => {
++    expect(linkedSourceHandlePropsForCaller(
++        {from: "agent", chatId: 4}, {type: "gatekeeper", id: 7}, "overseer-id"))
++      .toEqual({overseerId: "overseer-id", gatekeeperId: 7});
++    expect(() => linkedSourceHandlePropsForCaller(
++        {from: "gadget", gadgetId: 2}, {type: "gatekeeper", id: 7}, "overseer-id"))
++      .toThrow("Linked Source handles");
++  });
++
++  it("resolves a registered handle, opens fresh sessions, and rejects revocation", async () => {
++    const nonce = "11111111-1111-4111-8111-111111111111";
++    const registrations = new Map<string, {vendorId: string}>([
++      [nonce, {vendorId: "notion"}],
++    ]);
++    const first = {session: 1};
++    const second = {session: 2};
++    const describeLinkedSourceHandle = vi.fn(async (registeredNonce: string) =>
++      registrations.get(registeredNonce) ?? null,
++    );
++    const openLinkedSourceHandle = vi.fn(async (registeredNonce: string) => {
++      if (!registrations.has(registeredNonce)) return null;
++      return openLinkedSourceHandle.mock.calls.length === 1 ? first : second;
++    });
++    const registerSourceAccessHandle = vi.fn((registeredNonce: string) =>
++      registrations.has(registeredNonce)
++        ? "cfoslsa1_abcdef_22222222-2222-4222-8222-222222222222"
++        : null,
++    );
++    const broker = makeBroker({
++      describeLinkedSourceHandle,
++      openLinkedSourceHandle,
++      registerSourceAccessHandle,
++    });
++
++    await expect(broker.describe(handle)).resolves.toEqual({vendorId: "notion"});
++    await expect(broker.openReadSession(handle)).resolves.toBe(first);
++    await expect(broker.openReadSession(handle)).resolves.toBe(second);
++    await expect(broker.registerSourceAccess(handle)).resolves.toBe(
++      "cfoslsa1_abcdef_22222222-2222-4222-8222-222222222222",
++    );
++    expect(describeLinkedSourceHandle).toHaveBeenCalledWith(nonce);
++    expect(openLinkedSourceHandle).toHaveBeenCalledTimes(2);
++    expect(openLinkedSourceHandle).toHaveBeenNthCalledWith(1, nonce);
++    expect(openLinkedSourceHandle).toHaveBeenNthCalledWith(2, nonce);
++    expect(registerSourceAccessHandle).toHaveBeenCalledWith(nonce);
++
++    registrations.delete(nonce);
++    await expect(broker.describe(handle)).resolves.toBeNull();
++    await expect(broker.openReadSession(handle)).resolves.toBeNull();
++    await expect(broker.registerSourceAccess(handle)).resolves.toBeNull();
++  });
++
++  it("authorizes observations as linked-source and rejects actions and hooks", async () => {
++    const authorizeObservation = vi.fn(async () => {});
++    const queue = new LinkedSourceApprovalQueueImpl({authorizeObservation}, 7);
++    await queue.authorizeObservation({title: "Read source", description: "Read source."});
++    expect(authorizeObservation).toHaveBeenCalledWith(
++      7, {title: "Read source", description: "Read source."}, {from: "linked-source"},
++    );
++    expect(() => queue.submitAction(1, {title: "Write", description: "Write."}))
++      .toThrow("observation-only");
++    expect(() => queue.bindHook(
++      undefined!, undefined!, {title: "Hook", description: "Hook."},
++    )).toThrow("observation-only");
++  });
++});
++
++type TestOverseer = {
++  impl: {
++    ctx: DurableObjectState;
++    storage: any;
++    getGatekeeperFacet(id: number): any;
++    listObserverRequirements(role: "build" | "use"): Promise<unknown[]>;
++    ensureObserver(
++      profileId: string,
++      clientUser: object,
++      role: "build" | "use",
++      configureCb?: object,
++    ): Promise<void>;
++    authorizeSourceObservation(
++      gatekeeperId: number,
++      description: {title: string; description: string},
++      sourceAccessIds: string[],
++      caller: object,
++    ): Promise<void>;
++  };
++};
++
++function sourceAccessId(impl: TestOverseer["impl"], nonce: string): string {
++  return `cfoslsa1_${impl.ctx.id.toString()}_${nonce}`;
++}
++
++function gatekeeperRecord(
++    id: number,
++    vendorId: string,
++    hasObservedSourceAccessIds = false): object {
++  return {
++    id,
++    class: {},
++    creationSpec: {
++      type: "gatekeeper",
++      vendorId,
++      resourceUrl: `https://${vendorId}.invalid/resource`,
++      typeUrlPattern: "https://*.invalid/*",
++    },
++    hasObservedSourceAccessIds,
++  };
++}
++
++function ambientWwwkRecord(id: number, hasObservedSourceAccessIds?: boolean): object {
++  return {
++    id,
++    class: {},
++    creationSpec: {type: "ambient", vendorId: "wwwk", accountId: 1},
++    ...(hasObservedSourceAccessIds === undefined ? {} : {hasObservedSourceAccessIds}),
++  };
++}
++
++async function inTestOverseer(
++    name: string,
++    callback: (impl: TestOverseer["impl"]) => Promise<void>): Promise<void> {
++  const stub = env.TEST_OVERSEER.getByName(name);
++  await runInDurableObject(stub, async (instance: OverseerDurableObject) => {
++    await callback((instance as unknown as TestOverseer).impl);
++  });
++}
++
++describe("Linked Source observer requirements", () => {
++  it("applies an unbound ambient WWWK source requirement to a use collaborator", async () => {
++    await inTestOverseer("wwwk-unbound-use-observer", async impl => {
++      const sourceId = 21;
++      const wwwkId = 22;
++      const nonce = "11111111-1111-4111-8111-111111111111";
++      const accessId = sourceAccessId(impl, nonce);
++      impl.ctx.storage.kv.put(`sourceAccessId:${nonce}`, sourceId);
++      impl.storage.gatekeepers.put(gatekeeperRecord(sourceId, "notion"));
++      impl.storage.gatekeepers.put(ambientWwwkRecord(wwwkId, true));
++      const addObserver = vi.fn(async () => {});
++      impl.getGatekeeperFacet = (id: number) => {
++        if (id === sourceId) return {addObserver};
++        if (id === wwwkId) {
++          return {listObservedSourceAccessIds: async () => [accessId]};
++        }
++        throw new Error(`Unexpected gatekeeper ${id}.`);
++      };
++
++      const configure = vi.fn(async () => [{gatekeeperId: sourceId, accountId: 1}]);
++      await impl.ensureObserver("collaborator", {
++        listProvidedAccounts: async () => [],
++        getVerifier: async () => ({}),
++      }, "use", {configure} as object);
++
++      expect(configure).toHaveBeenCalledWith([
++        expect.objectContaining({gatekeeperId: sourceId, vendorId: "notion"}),
++      ]);
++      expect(addObserver).toHaveBeenCalledTimes(1);
++    });
++  });
++
++  it("lazily backfills an existing ambient WWWK record before reading requirements", async () => {
++    await inTestOverseer("wwwk-legacy-observer-record", async impl => {
++      const sourceId = 31;
++      const wwwkId = 32;
++      const nonce = "22222222-2222-4222-8222-222222222222";
++      const accessId = sourceAccessId(impl, nonce);
++      impl.ctx.storage.kv.put(`sourceAccessId:${nonce}`, sourceId);
++      impl.storage.gatekeepers.put(gatekeeperRecord(sourceId, "notion"));
++      impl.storage.gatekeepers.put(ambientWwwkRecord(wwwkId));
++      impl.getGatekeeperFacet = (id: number) => {
++        if (id === wwwkId) {
++          return {
++            describe: async () => ({hasObservedSourceAccessIds: true}),
++            listObservedSourceAccessIds: async () => [accessId],
++          };
++        }
++        throw new Error(`Unexpected gatekeeper ${id}.`);
++      };
++
++      await expect(impl.listObserverRequirements("use")).resolves.toEqual([
++        expect.objectContaining({gatekeeperId: sourceId, vendorId: "notion"}),
++      ]);
++      expect(impl.storage.gatekeepers.get(wwwkId)?.hasObservedSourceAccessIds).toBe(true);
++    });
++  });
++
++  it("rechecks a new observer when a Source requirement arrives during admission", async () => {
++    await inTestOverseer("wwwk-observer-recheck", async impl => {
++      const emailId = 41;
++      const sourceId = 42;
++      const wwwkId = 43;
++      const nonce = "33333333-3333-4333-8333-333333333333";
++      const accessId = sourceAccessId(impl, nonce);
++      impl.ctx.storage.kv.put(`sourceAccessId:${nonce}`, sourceId);
++      impl.storage.gatekeepers.put(gatekeeperRecord(emailId, "email"));
++      impl.storage.gatekeepers.put(gatekeeperRecord(sourceId, "notion"));
++      impl.storage.gatekeepers.put(ambientWwwkRecord(wwwkId, true));
++      impl.storage.gadgets.put({
++        id: 1,
++        title: "Test gadget",
++        created: new Date(),
++        bindingName: "GADGET",
++        bindings: {EMAIL: {target: emailId}},
++      });
++
++      const emailAddObserver = vi.fn(async () => {});
++      const sourceAddObserver = vi.fn(async () => {});
++      impl.getGatekeeperFacet = (id: number) => {
++        if (id === emailId) return {addObserver: emailAddObserver};
++        if (id === sourceId) return {addObserver: sourceAddObserver};
++        if (id === wwwkId) return {listObservedSourceAccessIds: async () => []};
++        throw new Error(`Unexpected gatekeeper ${id}.`);
++      };
++
++      let releaseEmailVerifier: (() => void) | undefined;
++      const emailVerifier = new Promise<object>(resolve => {
++        releaseEmailVerifier = () => resolve({});
++      });
++      const getVerifier = vi.fn((accountId: number, vendorId: string) => {
++        if (accountId === 1 && vendorId === "email") return emailVerifier;
++        return Promise.resolve({});
++      });
++      const configure = vi.fn(async (needs: Array<{gatekeeperId: number; vendorId: string}>) =>
++        needs.map(need => ({
++          gatekeeperId: need.gatekeeperId,
++          accountId: need.vendorId === "email" ? 1 : 2,
++        })),
++      );
++      const clientUser = {
++        listProvidedAccounts: async () => [],
++        getVerifier,
++      };
++
++      const admission = impl.ensureObserver(
++        "collaborator", clientUser, "use", {configure} as object,
++      );
++      await vi.waitFor(() => {
++        expect(getVerifier).toHaveBeenCalledWith(1, "email");
++      });
++
++      await impl.authorizeSourceObservation(
++        wwwkId,
++        {title: "Read WWWK", description: "Read a linked source."},
++        [accessId],
++        {from: "agent", chatId: 1},
++      );
++      releaseEmailVerifier?.();
++      await admission;
++
++      expect(configure).toHaveBeenNthCalledWith(1, [
++        expect.objectContaining({gatekeeperId: emailId, vendorId: "email"}),
++      ]);
++      expect(configure).toHaveBeenNthCalledWith(2, [
++        expect.objectContaining({gatekeeperId: sourceId, vendorId: "notion"}),
++      ]);
++      expect(sourceAddObserver).toHaveBeenCalledTimes(1);
++      expect(impl.storage.observers.get("collaborator")?.accountChoices).toMatchObject({
++        [emailId]: 1,
++        [sourceId]: 2,
++      });
++    });
++  });
++});
+diff --git a/packages/workshop-backend/src/overseer.ts b/packages/workshop-backend/src/overseer.ts
+index d6267e31f6b841a23bebd60462f0a78299288dfc..f20f3a9a7bcf660b577e76db216429d69f60d6b2 100644
+--- a/packages/workshop-backend/src/overseer.ts
++++ b/packages/workshop-backend/src/overseer.ts
+@@ -1,7 +1,7 @@
+ import { RpcCompatible, RpcStub, RpcTarget } from "capnweb";
+ import { validateRpc } from "capnweb-validate";
+ import { Overseer, GadgetMetadata, UiBundle, WorkpieceId, WorkpieceSummary, WorkpiecesSubscriber, GadgetClient, GadgetBindingInfo, GatekeeperClient, ActionState, ActionLogEntry, ActionsSubscriber, CodeUpdate, CodeSubscriber, AiChatMetadata, AiChatMessage, AiChatHistoryPage, AiChatSubscriber, AiChatAuthorInfo, AiModelConfig, AiChatMessageBody, AgentSpawnerConfig, ConsoleLogSubscriber, ConsoleLogEvent, CapsuleSpecifier, CollaboratorInfo, CollaboratorRole, AffectedCollaborator, ShareLinkInfo, GatekeeperCreationSpec, ObserverConfigCallback, ObserverBindingNeed, ObserverBindingFailure, BlueprintBindingAnnotation, BlueprintBinding, BlueprintMetadata, BlueprintOutput, MessageFormatRef, isOutputIcon, SpawnerEnvTarget, BlueprintGadgetSummary, AiChatStreamEvent, BlueprintScreenshotUpload, BLUEPRINT_SCREENSHOT_R2_PREFIX, blueprintScreenshotUrl, ChatAttachmentUpload, ChatAttachmentHandle, ChatAttachmentRef, BoundHookInfo, PreApprovableAction, PresenceParticipant, PresenceSubscriber, SlashCommandChoice, SlashCommandRequest, validateBindingName, createOpenGadgetError, OPEN_GADGET_ERROR_CODES, resolveSiteName } from '@gadgets/workshop-shared/api';
+-import { Gatekeeper, HookInitiator, ResourceDescription, ApprovalQueue, ActionDescription, ObservationAuthorizer, ObservationDescription, VendorDescription, SupportedResource, resolveRequestedResource, HookController, HookDescription, AGENT_CATALOG_MAX_ENTRIES, ActionKind } from "@gadgets/workshop-shared/gatekeeper";
++import { Gatekeeper, HookInitiator, ResourceDescription, ApprovalQueue, ActionDescription, ObservationAuthorizer, ObservationDescription, VendorDescription, SupportedResource, resolveRequestedResource, HookController, HookDescription, AGENT_CATALOG_MAX_ENTRIES, ActionKind, type SourceAccessBroker as SourceAccessBrokerContract, type LinkedSourceDescription } from "@gadgets/workshop-shared/gatekeeper";
+ import {
+   DurableObject, WorkerEntrypoint, RpcStub as NativeRpcStub,
+   RpcTarget as NativeRpcTarget, restore,
+@@ -180,6 +180,9 @@ type GatekeeperRecord = {
+   resourceTitle?: string,   // denormalized to avoid gatekeeper query
+   resourceUrl?: string;     // denormalized to avoid gatekeeper query
+   hasSlashCommands?: true;  // denormalized from ResourceDescription
++  // `undefined` はSource観測契約より前のrecordを示す。遅延更新後は必ずbooleanを保存し、
++  // 未対応のGatekeeperを再照会しない。
++  hasObservedSourceAccessIds?: boolean;
+   class: GatekeeperClass,
+   hook?: string,  // export name to which the gatekeeper's hook is connected
+
+@@ -2557,6 +2560,7 @@ class OverseerImpl implements AgentHooks {
+       gatekeeperRecord.resourceTitle = description.title;
+       gatekeeperRecord.resourceUrl = description.url;
+       gatekeeperRecord.hasSlashCommands = description.hasSlashCommands;
++      gatekeeperRecord.hasObservedSourceAccessIds = description.hasObservedSourceAccessIds === true;
+       this.storage.gatekeepers.put(gatekeeperRecord);
+     } catch (error) {
+       this.removeGatekeeper(id);
+@@ -2610,6 +2614,96 @@ class OverseerImpl implements AgentHooks {
+     }
+   }
+
++  async describeLinkedSource(gatekeeperId: WorkpieceId): Promise<LinkedSourceDescription> {
++    let record = this.storage.gatekeepers.get(gatekeeperId);
++    if (!record) throw new Error("No such gatekeeper.");
++    if (record.creationSpec?.type !== "gatekeeper") {
++      throw new Error("Gatekeeper does not have a source vendor.");
++    }
++
++    let description = await this.getGatekeeperFacet(gatekeeperId).describe();
++    let current = this.storage.gatekeepers.get(gatekeeperId);
++    if (!current) throw new Error("No such gatekeeper.");
++    if (current.creationSpec?.type !== "gatekeeper") {
++      throw new Error("Gatekeeper does not have a source vendor.");
++    }
++
++    return {
++      vendorId: current.creationSpec.vendorId,
++      url: description.url,
++      title: description.title,
++      tsType: description.tsType,
++    };
++  }
++
++  async openLinkedSourceSession(gatekeeperId: WorkpieceId): Promise<unknown> {
++    if (!this.storage.gatekeepers.get(gatekeeperId)) {
++      throw new Error("No such gatekeeper.");
++    }
++    return await this.getGatekeeperFacet(gatekeeperId).startSession(
++        new LinkedSourceApprovalQueueImpl(this, gatekeeperId));
++  }
++
++  createLinkedSourceHandle(gatekeeperId: WorkpieceId): string {
++    if (!this.storage.gatekeepers.get(gatekeeperId)) {
++      throw new Error("No such gatekeeper.");
++    }
++    const gatekeeperKey = `linkedSourceHandleForGatekeeper:${gatekeeperId}`;
++    let nonce = this.ctx.storage.kv.get<string>(gatekeeperKey);
++    if (!nonce) {
++      nonce = crypto.randomUUID();
++      this.ctx.storage.kv.put(gatekeeperKey, nonce);
++      this.ctx.storage.kv.put(`linkedSourceHandle:${nonce}`, gatekeeperId);
++    }
++    return `cfosls1_${this.ctx.id.toString()}_${nonce}`;
++  }
++
++  async describeLinkedSourceHandle(nonce: string): Promise<LinkedSourceDescription | null> {
++    const gatekeeperId = this.ctx.storage.kv.get<WorkpieceId>(`linkedSourceHandle:${nonce}`);
++    if (gatekeeperId === undefined) return null;
++    try {
++      return await this.describeLinkedSource(gatekeeperId);
++    } catch {
++      return null;
++    }
++  }
++
++  async openLinkedSourceHandle(nonce: string): Promise<unknown | null> {
++    const gatekeeperId = this.ctx.storage.kv.get<WorkpieceId>(`linkedSourceHandle:${nonce}`);
++    if (gatekeeperId === undefined) return null;
++    try {
++      return await this.openLinkedSourceSession(gatekeeperId);
++    } catch {
++      return null;
++    }
++  }
++
++  registerSourceAccessHandle(nonce: string): string | null {
++    const gatekeeperId = this.ctx.storage.kv.get<WorkpieceId>(`linkedSourceHandle:${nonce}`);
++    const record = gatekeeperId === undefined ? undefined : this.storage.gatekeepers.get(gatekeeperId);
++    if (!record || record.creationSpec?.type !== "gatekeeper") return null;
++    const gatekeeperKey = `sourceAccessIdForGatekeeper:${gatekeeperId}`;
++    return this.ctx.storage.transactionSync(() => {
++      let accessNonce = this.ctx.storage.kv.get<string>(gatekeeperKey);
++      if (!accessNonce) {
++        accessNonce = crypto.randomUUID();
++        this.ctx.storage.kv.put(gatekeeperKey, accessNonce);
++        this.ctx.storage.kv.put(`sourceAccessId:${accessNonce}`, gatekeeperId);
++      }
++      return `cfoslsa1_${this.ctx.id.toString()}_${accessNonce}`;
++    });
++  }
++
++  resolveSourceAccessId(sourceAccessId: string): GatekeeperRecord | null {
++    const parsed = parseSourceAccessId(sourceAccessId);
++    if (!parsed || parsed.overseerId !== this.ctx.id.toString()) return null;
++    const gatekeeperId = this.ctx.storage.kv.get<WorkpieceId>(
++        `sourceAccessId:${parsed.nonce}`);
++    if (gatekeeperId === undefined) return null;
++    const record = this.storage.gatekeepers.get(gatekeeperId);
++    return record?.creationSpec?.type === "gatekeeper" ? record : null;
++  }
++
+   // Maps chat ID to action numbers recently performed by that chat's agent. These are drained into
+   // the chat log after the tool returns. `awaitDecision` is true if any captured action needs it.
+   #capturedActions = new Map<number, {actions: number[], accessedGadget: boolean,
+@@ -2633,7 +2727,8 @@ class OverseerImpl implements AgentHooks {
+     try {
+       if (caller.from === "agent") {
+         this.#getOrCreateCapturedActions(caller.chatId).actions.push(actionId);
+-      } else if (caller.from !== "hook" && caller.chatId !== undefined && this.ownerId) {
++      } else if (caller.from !== "hook" && caller.from !== "linked-source" &&
++                 caller.chatId !== undefined && this.ownerId) {
+         let owner = this.users.get(this.users.idFromString(this.ownerId));
+         let userMeta = await owner.getChatContext(null);
+
+@@ -2695,6 +2790,63 @@ class OverseerImpl implements AgentHooks {
+     this.#associateAction(caller, actionId);
+   }
+
++  async authorizeSourceObservation(
++      gatekeeperId: number,
++      description: ObservationDescription,
++      sourceAccessIds: string[],
++      caller: GatekeeperCaller): Promise<void> {
++    if (!Array.isArray(sourceAccessIds) || sourceAccessIds.length === 0 ||
++        sourceAccessIds.some(id => typeof id !== "string" || id.length === 0)) {
++      throw new Error("Linked Source observer verification requires SourceAccess IDs.");
++    }
++    let sourceGatekeepers = new Map<WorkpieceId, GatekeeperRecord>();
++    for (let sourceAccessId of new Set(sourceAccessIds)) {
++      let source = this.resolveSourceAccessId(sourceAccessId);
++      if (!source || !observerVendorId(source)) {
++        throw new Error("A Linked Source cannot be verified for this workspace.");
++      }
++      sourceGatekeepers.set(source.id, source);
++    }
++
++    // 最初の外部awaitより前に要件を保存する。並行するobserver admissionはこのrevisionを
++    // 読むか、observer recordをcommitする前に再試行する。
++    this.#recordSourceObservationRequirements([...new Set(sourceAccessIds)]);
++    const excludeObservers = await this.#verifySourceObservers(
++      [...sourceGatekeepers.values()],
++    );
++    await this.authorizeObservation(gatekeeperId, {
++      ...description,
++      ...(excludeObservers.length > 0 ? {excludeObservers} : {}),
++    }, caller);
++  }
++
++  async #verifySourceObservers(sourceGatekeepers: GatekeeperRecord[]): Promise<string[]> {
++    let excluded = new Set<string>();
++    for (let observer of this.storage.observers.list()) {
++      for (let source of sourceGatekeepers) {
++        let vendorId = observerVendorId(source);
++        let accountId = observer.accountChoices[source.id];
++        if (!vendorId || accountId === undefined) {
++          excluded.add(observer.observerId);
++          break;
++        }
++        try {
++          let user = this.users.get(this.users.idFromName(observer.profileId));
++          let verifier = await user.getVerifier(accountId, vendorId);
++          if (!verifier) {
++            excluded.add(observer.observerId);
++            break;
++          }
++          await this.getGatekeeperFacet(source.id).addObserver(observer.observerId, verifier);
++        } catch {
++          excluded.add(observer.observerId);
++          break;
++        }
++      }
++    }
++    return [...excluded].sort();
++  }
++
+   async getChatAttachmentData(chatId: number, id: string): Promise<Uint8Array> {
+     let content = this.storage.chatAttachmentContent.get(validateChatAttachmentId(id));
+     if (!content || content.state.type !== "committed" || content.state.chatId !== chatId) {
+@@ -5940,8 +6092,96 @@ class OverseerImpl implements AgentHooks {
+     return result;
+   }
+
+-  listObserverRequirements(role: CollaboratorRole): ObserverBindingNeed[] {
+-    return this.#inScopeGatekeepers(role).map(observerBindingNeed);
++  #sourceObservationRequirementRevision(): number {
++    return this.ctx.storage.kv.get<number>("sourceObservationRequirementRevision") ?? 0;
++  }
++
++  #sourceObservationRequirementIds(): Set<string> {
++    const prefix = "sourceObservationRequirement:";
++    return new Set(
++      [...this.ctx.storage.kv.list<true>({prefix})]
++        .filter(([, value]) => value === true)
++        .map(([key]) => key.slice(prefix.length)),
++    );
++  }
++
++  #recordSourceObservationRequirements(sourceAccessIds: string[]): void {
++    this.ctx.storage.transactionSync(() => {
++      let changed = false;
++      for (let sourceAccessId of new Set(sourceAccessIds)) {
++        const key = `sourceObservationRequirement:${sourceAccessId}`;
++        if (this.ctx.storage.kv.get(key) === true) continue;
++        this.ctx.storage.kv.put(key, true);
++        changed = true;
++      }
++      if (changed) {
++        this.ctx.storage.kv.put(
++          "sourceObservationRequirementRevision",
++          this.#sourceObservationRequirementRevision() + 1,
++        );
++      }
++    });
++  }
++
++  async #sourceAwareGatekeepers(): Promise<GatekeeperRecord[]> {
++    let result: GatekeeperRecord[] = [];
++    for (let original of [...this.storage.gatekeepers.list()]) {
++      let gatekeeper = original;
++      if (gatekeeper.hasObservedSourceAccessIds === undefined) {
++        const description = await this.getGatekeeperFacet(gatekeeper.id).describe();
++        const current = this.storage.gatekeepers.get(gatekeeper.id);
++        if (!current) continue;
++        if (current.hasObservedSourceAccessIds === undefined) {
++          gatekeeper = {
++            ...current,
++            hasObservedSourceAccessIds: description.hasObservedSourceAccessIds === true,
++          };
++          this.storage.gatekeepers.put(gatekeeper);
++        } else {
++          gatekeeper = current;
++        }
++      }
++      if (gatekeeper.hasObservedSourceAccessIds === true) result.push(gatekeeper);
++    }
++    return result;
++  }
++
++  async #observerGatekeepers(role: CollaboratorRole): Promise<{
++    gatekeepers: GatekeeperRecord[];
++    sourceObservationRequirementRevision: number;
++  }> {
++    let inScope = this.#inScopeGatekeepers(role);
++    let byId = new Map(inScope.map(gatekeeper => [gatekeeper.id, gatekeeper]));
++    let sourceAccessIds = this.#sourceObservationRequirementIds();
++    for (let gatekeeper of await this.#sourceAwareGatekeepers()) {
++      let sourceAware = this.getGatekeeperFacet(gatekeeper.id) as unknown as {
++        listObservedSourceAccessIds(): Promise<string[]>;
++      };
++      let ids = await sourceAware.listObservedSourceAccessIds();
++      if (!Array.isArray(ids) || ids.some(id => typeof id !== "string" || id.length === 0)) {
++        throw new Error("A Gatekeeper returned invalid Linked Source observer requirements.");
++      }
++      for (let id of ids) sourceAccessIds.add(id);
++    }
++
++    // 上のsource-aware Gatekeeper RPC中に要件が追加され得る。CFOS側集合を再読込し、
++    // 返すsnapshotとrevisionを一致させる。
++    for (let id of this.#sourceObservationRequirementIds()) sourceAccessIds.add(id);
++    for (let sourceAccessId of [...sourceAccessIds].sort()) {
++      let source = this.resolveSourceAccessId(sourceAccessId);
++      if (!source || !observerVendorId(source)) {
++        throw new Error("A Linked Source cannot be verified for this workspace.");
++      }
++      byId.set(source.id, source);
++    }
++    return {
++      gatekeepers: [...byId.values()],
++      sourceObservationRequirementRevision: this.#sourceObservationRequirementRevision(),
++    };
++  }
++
++  async listObserverRequirements(role: CollaboratorRole): Promise<ObserverBindingNeed[]> {
++    return (await this.#observerGatekeepers(role)).gatekeepers.map(observerBindingNeed);
+   }
+
+   // Best-effort `removeObserver(observerId)` across the given gatekeeper ids. Never throws; logs
+@@ -6017,21 +6257,14 @@ class OverseerImpl implements AgentHooks {
+       clientUser: DurableObjectStub<UserDurableObject>,
+       role: CollaboratorRole,
+       configureCb?: RpcStub<ObserverConfigCallback>): Promise<void> {
+-    // 1. Select in-scope gatekeepers. If none require an account, there is nothing to verify and
+-    //    no observer record is needed (built-in gatekeepers never name observers in
+-    //    excludeObservers).
+-    let inScope = this.#inScopeGatekeepers(role);
+-    if (inScope.length === 0) return;
+-
+-    // 2. Load any existing observer record, and build a working copy of its account choices.
++    // (1) 既存observer recordを読み、account choiceの作業コピーを作る。
++    // account不要のcollaboratorにも空recordを保存する。後からSource要件が追加された時に
++    // 観測経路がそのobserverを見つけられるようにする。
+     let record = this.storage.observers.get(profileId);
+     let accountChoices: {[gatekeeperId: number]: number} = {...record?.accountChoices};
+-
+-    // Gatekeeper ids whose account choice came from the persisted record (vs. configured during
+-    // this call). On a verification failure we only roll back observers we registered *this* call,
+-    // leaving pre-existing registrations intact (rollback restores the pre-call state).
+-    let preConfigured = new Set<number>(
+-        inScope.filter(gk => gk.id in accountChoices).map(gk => gk.id));
++    let persistedAccountChoiceIds = new Set(
++      Object.keys(record?.accountChoices ?? {}).map(Number),
++    );
+
+     let observerId = record?.observerId ?? crypto.randomUUID();
+     // Gatekeepers we successfully registered the observer with during this call.
+@@ -6049,11 +6282,21 @@ class OverseerImpl implements AgentHooks {
+
+     try {
+       while (true) {
+-        // 3. Determine uncovered bindings: in-scope gatekeepers with no account choice yet. Ambient
+-        //    bindings use the collaborator's matching provided account automatically; unlike an
+-        //    ordinary connection, there is no meaningful account choice when one already exists.
+-        //    On a re-prompt, leave a failed ambient binding uncovered so the client can explain the
+-        //    failure rather than silently retrying the same account.
++        // (2) static bindingと各source-aware Gatekeeperの実依存集合をsnapshotする。
++        // 下のobserver record書込みと同一transactionでrevisionを確認する。
++        let {gatekeepers: inScope, sourceObservationRequirementRevision} =
++            await this.#observerGatekeepers(role);
++
++        // この呼出しより前のrecordから得たaccount choiceのGatekeeper IDを分ける。
++        // 検証失敗時は今回登録したobserverだけを戻し、既存登録は維持する。
++        let preConfigured = new Set(
++          inScope.filter(gk => persistedAccountChoiceIds.has(gk.id)).map(gk => gk.id),
++        );
++
++        while (true) {
++          // (3) account choiceのないin-scope bindingを調べる。Ambient bindingは対応する
++          // provided accountを自動利用する。失敗したambient bindingは再prompt時に未解決の
++          // ままとし、同じaccountを黙って再試行しない。
+         let uncovered = inScope.filter(gk => !(gk.id in accountChoices));
+         let ambientNeeds = uncovered.flatMap(gk => {
+           let spec = gk.creationSpec;
+@@ -6157,6 +6400,7 @@ class OverseerImpl implements AgentHooks {
+           for (let id of failures.keys()) {
+             delete accountChoices[id];
+             preConfigured.delete(id);
++            persistedAccountChoiceIds.delete(id);
+           }
+
+           // Offer the user a chance to repair (typically re-authenticate the expired account),
+@@ -6177,6 +6421,18 @@ class OverseerImpl implements AgentHooks {
+
+         // All in-scope bindings verified successfully.
+         break;
++        }
++
++        // Source観測は外部検証awaitの前に要件を公開する。検証中に要件が増えた場合は、
++        // 観測経路からこのobserverが見える前に完全な集合を再検証する。
++        let persisted = this.ctx.storage.transactionSync(() => {
++          if (this.#sourceObservationRequirementRevision() !== sourceObservationRequirementRevision) {
++            return false;
++          }
++          this.storage.observers.put({profileId, observerId, accountChoices});
++          return true;
++        });
++        if (persisted) return;
+       }
+     } catch (err) {
+       // Best-effort remove all the observers that were newly-added since we didn't persist the
+@@ -6184,10 +6440,6 @@ class OverseerImpl implements AgentHooks {
+       await this.#removeObserverFromGatekeepers(observerId, [...newlyAdded]);
+       throw err;
+     }
+-
+-    // 6. Persist the observer record only after all addObserver calls succeed. Creating/updating
+-    //    the record is the canonical moment the user becomes a configured observer.
+-    this.storage.observers.put({profileId, observerId, accountChoices});
+   }
+
+   // Render the observer verification failures as one line per binding, naming the connection and the
+@@ -6665,6 +6917,26 @@ export class OverseerDurableObject extends DurableObject<Cloudflare.Env> {
+     return this.impl.startGatekeeperSession(target, caller);
+   }
+
++  async openLinkedSourceSession(gatekeeperId: WorkpieceId): Promise<unknown> {
++    return await this.impl.openLinkedSourceSession(gatekeeperId);
++  }
++
++  createLinkedSourceHandle(gatekeeperId: WorkpieceId): string {
++    return this.impl.createLinkedSourceHandle(gatekeeperId);
++  }
++
++  async describeLinkedSourceHandle(nonce: string): Promise<LinkedSourceDescription | null> {
++    return await this.impl.describeLinkedSourceHandle(nonce);
++  }
++
++  async openLinkedSourceHandle(nonce: string): Promise<unknown | null> {
++    return await this.impl.openLinkedSourceHandle(nonce);
++  }
++
++  registerSourceAccessHandle(nonce: string): string | null {
++    return this.impl.registerSourceAccessHandle(nonce);
++  }
++
+   startGatekeeperHook(id: number): NativeRpcStub<RpcTarget> {
+     // TODO: There's a bug in workerd, if we return the RpcTarget directly here, because it is a
+     //   Proxy, serializeJsValueWithPipeline() decides it is non-pipelineable, which is incorrect.
+@@ -6822,6 +7094,8 @@ type GatekeeperCaller = {
+   chatId?: number;
+ } | {
+   from: "hook";
++} | {
++  from: "linked-source";
+ };
+
+ type GatekeeperLoopbackProps = {
+@@ -6859,6 +7133,16 @@ export class GatekeeperLoopback extends WorkerEntrypoint<Cloudflare.Env, Gatekee
+
+     return new Proxy(session, {
+       get(target, prop, receiver) {
++        if (prop === "$cfosLinkedSourceHandle") {
++          return () => {
++            const props = linkedSourceHandlePropsForCaller(
++              ctx.props.caller, ctx.props.target, ctx.props.overseerId,
++            );
++            const ns = ctx.exports.OverseerDurableObject;
++            return ns.get(ns.idFromString(props.overseerId))
++              .createLinkedSourceHandle(props.gatekeeperId);
++          };
++        }
+         // Note: We need `target` to be used as the receiver. If we use `receiver` as the receiver,
+         //   we'll get an illegal invocation, as `receiver` points to our Proxy.
+         return Reflect.get(target, prop, target);
+@@ -6874,6 +7158,71 @@ export class GatekeeperLoopback extends WorkerEntrypoint<Cloudflare.Env, Gatekee
+   dummyMethodToWorkAroundValidatorBug() {}
+ }
+
++type LinkedSourceHandleProps = {
++  overseerId: string;
++  gatekeeperId: WorkpieceId;
++};
++
++/** @internal Verifies a reserved Linked Source handle request. */
++export function linkedSourceHandlePropsForCaller(
++    caller: GatekeeperCaller, target: BindingLoopbackTarget, overseerId: string): LinkedSourceHandleProps {
++  if (caller.from !== "agent" || target.type !== "gatekeeper") {
++    throw new Error("Linked Source handles can only be issued to an agent for a gatekeeper.");
++  }
++  return {overseerId, gatekeeperId: target.id};
++}
++
++/** CFOS 内で opaque Linked Source handle を解決する stable Broker。 */
++export class SourceAccessBroker
++    extends WorkerEntrypoint<Cloudflare.Env>
++    implements SourceAccessBrokerContract {
++  async describe(handle: string): Promise<LinkedSourceDescription | null> {
++    const parsed = parseLinkedSourceHandle(handle);
++    if (!parsed) return null;
++    try {
++      const ns = this.ctx.exports.OverseerDurableObject;
++      return await ns.get(ns.idFromString(parsed.overseerId))
++        .describeLinkedSourceHandle(parsed.nonce);
++    } catch {
++      return null;
++    }
++  }
++
++  async openReadSession(handle: string): Promise<unknown | null> {
++    const parsed = parseLinkedSourceHandle(handle);
++    if (!parsed) return null;
++    try {
++      const ns = this.ctx.exports.OverseerDurableObject;
++      return await ns.get(ns.idFromString(parsed.overseerId))
++        .openLinkedSourceHandle(parsed.nonce);
++    } catch {
++      return null;
++    }
++  }
++
++  async registerSourceAccess(handle: string): Promise<string | null> {
++    const parsed = parseLinkedSourceHandle(handle);
++    if (!parsed) return null;
++    try {
++      const ns = this.ctx.exports.OverseerDurableObject;
++      return await ns.get(ns.idFromString(parsed.overseerId))
++        .registerSourceAccessHandle(parsed.nonce);
++    } catch {
++      return null;
++    }
++  }
++}
++
++function parseLinkedSourceHandle(handle: string): {overseerId: string; nonce: string} | null {
++  const match = /^cfosls1_([0-9a-f]+)_([0-9a-f-]{36})$/i.exec(handle);
++  return match ? {overseerId: match[1], nonce: match[2]} : null;
++}
++
++function parseSourceAccessId(sourceAccessId: string): {overseerId: string; nonce: string} | null {
++  const match = /^cfoslsa1_([0-9a-f]+)_([0-9a-f-]{36})$/i.exec(sourceAccessId);
++  return match ? {overseerId: match[1], nonce: match[2]} : null;
++}
++
+ type GatekeeperHookLoopbackProps = {
+   overseerId: string;
+   hookId: number;
+@@ -9436,6 +9785,13 @@ class ApprovalQueueImpl extends RpcTarget implements ApprovalQueue {
+     return this.impl.authorizeObservation(this.gatekeeperId, description, this.caller);
+   }
+
++  authorizeSourceObservation(
++      description: ObservationDescription, sourceAccessIds: string[]): Promise<void> {
++    return this.impl.authorizeSourceObservation(
++      this.gatekeeperId, description, sourceAccessIds, this.caller,
++    );
++  }
++
+   submitAction(action: number, description: ActionDescription): Promise<void> {
+     return this.impl.submitAction(this.gatekeeperId, action, description, this.caller);
+   }
+@@ -9447,6 +9803,34 @@ class ApprovalQueueImpl extends RpcTarget implements ApprovalQueue {
+   }
+ }
+
++type LinkedSourceObservationAuthorizer = Pick<OverseerImpl, "authorizeObservation">;
++
++/** @internal ApprovalQueue implementation used only by Linked Source read sessions. */
++export class LinkedSourceApprovalQueueImpl extends RpcTarget implements ApprovalQueue {
++  constructor(private impl: LinkedSourceObservationAuthorizer, private gatekeeperId: number) {
++    super();
++  }
++
++  authorizeObservation(description: ObservationDescription): Promise<void> {
++    return this.impl.authorizeObservation(this.gatekeeperId, description, {from: "linked-source"});
++  }
++
++  authorizeSourceObservation(
++      _description: ObservationDescription, _sourceAccessIds: string[]): Promise<void> {
++    throw new Error("Linked source sessions are observation-only.");
++  }
++
++  submitAction(_action: number, _description: ActionDescription): Promise<void> {
++    throw new Error("Linked source sessions are observation-only.");
++  }
++
++  bindHook<Hook extends RpcTarget>(
++      _controller: Fetcher<HookController<Hook>>, _callback: NativeRpcStub<Hook>,
++      _description: HookDescription): Promise<void> {
++    throw new Error("Linked source sessions are observation-only.");
++  }
++}
++
+ // =======================================================================================
+
+ type AgentSpawnerBindingProps = {
+diff --git a/packages/workshop-backend/src/server.ts b/packages/workshop-backend/src/server.ts
+index 26dc90799fabf5fb30b26cf37e2dcbe728b13018..a9561e98002364c88244b351a18924f6c5d08fae 100644
+--- a/packages/workshop-backend/src/server.ts
++++ b/packages/workshop-backend/src/server.ts
+@@ -19,7 +19,7 @@ import { getAiGatewayConfig } from "./ai-gateway.js";
+ import { AdminSettings, AdminApiImpl } from "./admin-settings.js";
+ import { BlueprintKvRecord, buildBlueprintArchiveStream, sanitizeBlueprintOutput, listFeaturedBlueprintsFromKv, parseBlueprintArchive, randomBlueprintId, readBlueprintContent, readBlueprintKvRecord } from "./blueprint-archive.js";
+ import { GatekeeperConnectCallbackImpl, normalizeUsername, UserDurableObject, CLOUDFLARE_VENDOR_ID } from "./user";
+-import { OverseerDurableObject, GatekeeperLoopback, CodeModeTailLoopback, AgentSpawnerGatekeeper, GatekeeperHookLoopback, GadgetTailLoopback, AgentSelfLoopback, TransientStubLoopback } from "./overseer";
++import { OverseerDurableObject, GatekeeperLoopback, SourceAccessBroker, CodeModeTailLoopback, AgentSpawnerGatekeeper, GatekeeperHookLoopback, GadgetTailLoopback, AgentSelfLoopback, TransientStubLoopback } from "./overseer";
+ import { ExternalMessageGateway } from "./external-message-gateway";
+ import { RpcStub as NativeRpcStub } from "cloudflare:workers";
+ import { recordAnalytics } from "./analytics";
+@@ -53,7 +53,7 @@ export { AdminSettings };
+ export { UserDurableObject, GatekeeperConnectCallbackImpl };
+
+ // Re-export entrypoint types from overseer.ts.
+-export { OverseerDurableObject, GatekeeperLoopback, GatekeeperHookLoopback,
++export { OverseerDurableObject, GatekeeperLoopback, SourceAccessBroker, GatekeeperHookLoopback,
+     CodeModeTailLoopback, AgentSpawnerGatekeeper, GadgetTailLoopback,
+     AgentSelfLoopback, TransientStubLoopback };
+
+diff --git a/packages/workshop-shared/src/gatekeeper.ts b/packages/workshop-shared/src/gatekeeper.ts
+index fea0f98d52c8fcbedf370ad75e6a5b30a480175e..6fc761fe0eb7de3dfbbf9c6f119db9b45e4048d5 100644
+--- a/packages/workshop-shared/src/gatekeeper.ts
++++ b/packages/workshop-shared/src/gatekeeper.ts
+@@ -193,12 +193,45 @@ export type ResourceDescription = {
+   // Indicates that getSlashCommandProvider() is available.
+   hasSlashCommands?: true;
+
++  // listObservedSourceAccessIds() を利用できることを示す。
++  // 登録済みLinked Sourceから観測を導出するGatekeeper向けのCFOS内部拡張である。
++  hasObservedSourceAccessIds?: true;
++
+   // Some resources implement the ability for the client to subscribe to events. The application
+   // implements a "hook", which is a WorkerEntrypoint that implements the TypeScript interface
+   // named by `hookTsType` (which must be one of the exports from `getTypescriptTypes()`).
+   hookTsType?: string;
+ }
+
++/**
++ * SourceAccessBroker が返す、原典を識別する非秘密情報。
++ *
++ * URL、title、tsType は Gatekeeper の実際の ResourceDescription からそのまま導出する。
++ */
++export type LinkedSourceDescription = Pick<ResourceDescription, "url" | "title" | "tsType"> & {
++  /** Gatekeeper creation spec に記録された vendor 識別子。 */
++  vendorId: string;
++};
++
++/**
++ * 非ポータブルな Linked Source handle を解決する CFOS の内部 Broker。
++ *
++ * handle は CFOS が発行・失効させ、利用側は本文や capability を保存しない。
++ */
++export interface SourceAccessBroker extends WorkerEntrypoint {
++  /** 現在有効な handle の非秘密な原典情報を返す。 */
++  describe(handle: string): Promise<LinkedSourceDescription | null>;
++
++  /** 現在有効な handle から新しい observation-only Session を開く。 */
++  openReadSession(handle: string): Promise<unknown | null>;
++
++  /**
++   * 現在有効な handle を、同一Overseer内の observer 検証だけに使える非bearer IDへ登録する。
++   * ID自体から本文、Session、verifierは取得できない。
++   */
++  registerSourceAccess(handle: string): Promise<string | null>;
++}
++
+ // Describes a kind of resource that a vendor can provide access to (e.g. "Jira Issue", "Gmail
+ // Mailbox") rather than a specific instance.
+ export type SupportedResource = {
+@@ -672,6 +705,12 @@ export interface Gatekeeper<Session> extends DurableObject {
+   // The gatekeeper should ideally permit observers who are mailing list members.
+   addObserver(id: string, user: Fetcher<GatekeeperUserVerifier>): Promise<void>;
+
++  /**
++   * この Gatekeeper が実際に返した観測の生成元として記録した SourceAccess ID を返す。
++   * hasObservedSourceAccessIds を advertise した Gatekeeper だけが実装する。
++   */
++  listObservedSourceAccessIds?(): Promise<string[]>;
++
+   // Notifies the gatekeeper that it can stop tracking the given observer, who was previously
+   // added using `addObserver()`. The gatekeeper no longer needs to verify whether each observation
+   // is safe for this observer.
+@@ -798,6 +837,13 @@ export interface SlashCommandProvider extends RpcTarget {
+ // actually required, the gatekeeper must still submit all actions and wait for apply() to be
+ // called before applying them.
+ export interface ApprovalQueue extends ObservationAuthorizer {
++  /**
++   * 生成元のSourceAccess IDをCFOS内部でobserverごとに検証してから観測を認可する。
++   * IDは監査descriptionへ記録せず、同一Overseer内でのみ解決する。
++   */
++  authorizeSourceObservation(
++      description: ObservationDescription, sourceAccessIds: string[]): Promise<void>;
++
+   // TODO: Method to indicate that the gadget tried to perform an action that the gatekeeper itself
+   //   hasn't been authorized to do (e.g. the user hasn't authorized the right OAuth scopes). The
+   //   system should direct the user to the right UI to authorize the action.

@@ -6,7 +6,7 @@
 関係しない抽象化、複数 version 対応、網羅的なテストは後回しにする。現在のフェーズが
 完了するまで次を実装しない。
 
-現在地: Phase 0 から Phase 4 は完了。次は Phase 5 の installer PoC。
+現在地: Phase 0 から Phase 5 は完了。次は Phase 6 のローカル installer MVP。
 
 ## 導入方式の決定
 
@@ -90,6 +90,13 @@ Phase 5 開始時点の既知の基準は次のとおりである。
 
 対象外: Cloudflare への実 deploy、完成した利用者向け CLI、複数 version 対応、upgrade、
 データ消去。
+
+**結果:** Starter `93f14df`、CFOS `8b08672`、WWWK `8ba113e`と2つの固定patchを
+`installer/`で追跡した。Starter用互換lockfileを隔離worktreeで再生成し、frozen install、
+CFOS patchのclean apply、focused test、build、Starter generatorのtest / dry-runを確認した。
+StarterとCFOSはそれぞれpnpm 11.9と11.17を指定するため、Starter patchはCFOS buildを
+CFOS project cwdで起動する。local persistenceと既存resource再利用の実操作はdeployを伴うため、
+Phase 6以降で確認する。
 
 ## Phase 6: ローカル installer MVP
 

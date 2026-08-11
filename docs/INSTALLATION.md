@@ -3,8 +3,9 @@
 ## 状態
 
 WWWK の利用者向け導入方式は、version 固定の installer とする。特定の CFOS または
-`cloudflare-os-starter` fork は要求しない。installer は未実装であり、本書は確定した契約と
-実装計画の境界を記録する。
+`cloudflare-os-starter` fork は要求しない。利用者向けinstallerは未実装である。Phase 5のPoCは
+固定revision向けのpatch、互換lockfile、双方向service bindingの生成値を追跡し、次フェーズの
+実装入力にする。
 
 現在の symbolic link 手順は内部的なローカル開発専用である。利用者向けの install / uninstall
 契約にはしない。
@@ -18,6 +19,10 @@ installer は、次の 2 つの環境へ同じ `gatekeeper-wwwk` を導入する
 
 初期版は、検証済みの Starter、CFOS、WWWK、companion patch の 1 組だけを対応対象にする。
 任意 version への自動適用、競合解決、upgrade 自動化は行わない。
+
+Phase 5の対応組とraw patchは[installer/](../installer/)で追跡する。StarterはCFOSを自身の
+project cwdでbuildする最小互換patchも必要とする。両repositoryの公式checkoutは変更せず、
+次フェーズで一時worktreeへだけ適用する。
 
 ## 導入モデル
 
