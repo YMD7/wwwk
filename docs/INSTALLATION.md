@@ -3,9 +3,8 @@
 ## 状態
 
 WWWK の利用者向け導入方式は、version 固定の installer とする。特定の CFOS または
-`cloudflare-os-starter` fork は要求しない。利用者向けinstallerは未実装である。Phase 5のPoCは
-固定revision向けのpatch、互換lockfile、双方向service bindingの生成値を追跡し、次フェーズの
-実装入力にする。
+`cloudflare-os-starter` fork は要求しない。Phase 6では対応する公式 CFOS clone をローカルで
+起動する入口を提供する。Starterへの導入とCloudflare deployはまだ実装しない。
 
 現在の symbolic link 手順は内部的なローカル開発専用である。利用者向けの install / uninstall
 契約にはしない。
@@ -92,19 +91,48 @@ CFOS package のコピーは作らない。
 
 ## ローカル導入
 
-初期の installer は、利用者が指定した公式 CFOS clone から専用の integration worktree を
-作る。そこへ companion patch と WWWK package を接続し、既存の CFOS 開発サーバーで起動する。
+対応する公式 CFOS clone を固定 revisionでcheckoutし、cleanな状態で次を実行する。
+
+```sh
+pnpm run install:local -- --cfos "$CFOS_ROOT"
+```
+
+既定ではstateを`$XDG_STATE_HOME/wwwk/local`、未設定時は
+`~/.local/state/wwwk/local`へ保存する。別の場所を使う場合は、再起動とdisconnectでも同じ
+絶対pathを指定する。
+
+```sh
+pnpm run install:local -- \
+  --cfos "$CFOS_ROOT" \
+  --state-dir "$STATE_DIR"
+```
+
+installer は state の隣に管理用 integration worktreeを作り、そこだけへ companion patch、
+local persistence patch、固定 WWWK runtime、統合 lockfileを適用して`pnpm install
+--frozen-lockfile`後に既存のCFOS dev runnerを起動する。CFOS checkoutとその`.wrangler` stateは
+変更しない。runner は同じ state path を全Workerの`wrangler dev --persist-to`へ渡す。
+
+停止後は同じコマンドを実行して再起動できる。stateとWWWKのSQLite dataは保持される。
+
+```sh
+pnpm run disconnect:local -- \
+  --cfos "$CFOS_ROOT" \
+  --state-dir "$STATE_DIR"
+```
+
+local disconnectは、所有を確認したintegration worktreeだけを外す。state、SQLite data、
+portable data、CFOS checkout、Git履歴、CFOS全体の`.wrangler` stateは削除しない。再接続では
+同じstate pathを指定する。
+
+次の場合は変更前にfail-closedで停止する。
+
+- official CFOS origin、固定revision、cleanなworking treeのいずれかが一致しない
+- managed stateまたはintegration worktreeの所有を確認できない
+- patch、固定runtime、統合lockfile、service bindingが一致しない
 
 installer の実装前は、開発者だけが CFOS の `packages/gatekeeper-wwwk` から WWWK へ
 symbolic link を作成して検証できる。この手順は互換契約ではなく、対応 revision の確認なしに
 一般利用者へ案内しない。
-
-ローカル installer の実装では、次を実証してから保存場所を確定する。
-
-- 利用者の CFOS checkout を変更しないこと
-- 再実行後も同じ WWWK / CFOS ローカルデータを利用できること
-- 接続解除後も WWWK データを保持できること
-- CFOS 全体の `.wrangler` state を削除せずに WWWK だけを扱えること
 
 ## Cloudflare OS Starter への導入
 

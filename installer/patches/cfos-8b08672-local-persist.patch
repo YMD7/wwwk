@@ -1,0 +1,23 @@
+diff --git a/run-dev-server.js b/run-dev-server.js
+index 1794935..29c4fbb 100644
+--- a/run-dev-server.js
++++ b/run-dev-server.js
+@@ -9,0 +10 @@
++//   --persist-to <directory>   Store local Wrangler data outside this checkout.
+@@ -16 +17 @@ import { execFileSync, spawn } from "node:child_process";
+-import { join, dirname } from "node:path";
++import { isAbsolute, join, dirname } from "node:path";
+@@ -48,0 +50,11 @@ const useWorkersAi = process.argv.includes("--use-workers-ai-binding");
++const persistIndex = process.argv.indexOf("--persist-to");
++const persistTo = persistIndex === -1 ? undefined : process.argv[persistIndex + 1];
++if (persistIndex !== -1 && (!persistTo || !isAbsolute(persistTo))) {
++  console.error("--persist-to requires an absolute directory.");
++  process.exit(1);
++}
++if (persistIndex !== -1 && process.argv.indexOf("--persist-to", persistIndex + 1) !== -1) {
++  console.error("--persist-to may be specified only once.");
++  process.exit(1);
++}
++
+@@ -321,0 +334 @@ if (wranglerPort) {
++if (persistTo) args.push("--persist-to", persistTo);

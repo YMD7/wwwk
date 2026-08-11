@@ -6,7 +6,7 @@
 関係しない抽象化、複数 version 対応、網羅的なテストは後回しにする。現在のフェーズが
 完了するまで次を実装しない。
 
-現在地: Phase 0 から Phase 5 は完了。次は Phase 6 のローカル installer MVP。
+現在地: Phase 0 から Phase 6 は完了。次は Phase 7 の Starter への install / disconnect。
 
 ## 導入方式の決定
 
@@ -112,6 +112,15 @@ Phase 6以降で確認する。
 - 利用者の checkout、Git履歴、CFOS全体の`.wrangler` stateを破壊しない。
 
 対象外: Cloudflare deploy、GUI installer、完全消去、複数 version 対応。
+
+**結果:** `pnpm run install:local -- --cfos "$CFOS_ROOT"`を入口として追加した。installerは
+固定tuple、official origin、cleanなCFOS checkout、管理stateの所有を検証してから、checkout外の
+integration worktreeを作る。companion patch、local persistence patch、固定WWWK runtime、
+統合lockfileを適用し、frozen install後に既存runnerを起動する。Wranglerの複数Worker起動で
+`GATEKEEPER_WWWK`と`CFOS_SOURCE_ACCESS_BROKER`、同一絶対`--persist-to`を確認した。local
+disconnectは管理worktreeだけを外し、stateとWWWK dataを保持する。Owned Source、Linked Notion、
+共有observerは既存focused testで回帰を確認する。Cloudflare deploy、Starter接続解除、完全消去、
+複数versionは対象外とする。
 
 ## Phase 7: Starter への install / disconnect
 

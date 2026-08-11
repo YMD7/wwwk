@@ -8,7 +8,10 @@
     "build": "tsc",
     "types:check": "tsc --noEmit",
     "test": "vitest run",
-    "test:installer-poc": "node --test scripts/installer-poc.test.mjs"
+    "test:installer-poc": "node --test scripts/installer-poc.test.mjs",
+    "test:local-installer": "node --test scripts/local-installer.test.mjs",
+    "install:local": "node scripts/local-installer.mjs",
+    "disconnect:local": "node scripts/local-installer.mjs disconnect"
   },
   "dependencies": {
     "capnweb": "^0.8.0",
