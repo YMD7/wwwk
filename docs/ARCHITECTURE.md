@@ -34,13 +34,54 @@ collection として管理する。WWWK は、原典から Source revision、Evi
 導入は段階的に進める。
 
 1. clone した CFOS へ `gatekeeper-wwwk` を組み込み、ローカルで開発と検証を行う。
-2. 検証後に、`cloudflare-os-starter` から Cloudflare へデプロイする構成へ対応する。
+2. version 固定の installer で、対応する公式 CFOS と `cloudflare-os-starter` へ同じ統合を
+   再現する。
+3. 同じ Worker と保存資源の identity を維持して Cloudflare へ再デプロイする。
 
 WWWK は独立した Gatekeeper Worker とし、CFOS から `GATEKEEPER_WWWK` service binding
 で接続する。ローカル版と本番版で中核実装を共通化し、本番対応はローカル検証後に行う。
 WWWK リポジトリ直下を単一の `gatekeeper-wwwk` package とし、独自の `packages/` 階層や
-monorepo は作らない。ローカルでは CFOS の `packages/gatekeeper-wwwk` から WWWK へ
-link する。詳細は [Installation](INSTALLATION.md) に記録する。
+monorepo は作らない。
+
+公式 CFOS の公開拡張境界だけでは、Linked Source の stable Broker と共有 Gadget の
+observer 検証を表現できない。installer はこの差分を CFOS の対応 revision 専用 patch として
+一時 worktree へ適用する。利用者へ WWWK 専用の CFOS / Starter fork を要求せず、利用者の
+Git 履歴と作業ツリーも変更しない。一方、Cloudflare 上で動く Workshop は WWWK 対応コードを
+含む新しい Worker version へ再デプロイされる。稼働中の Worker へコードを動的注入しない。
+
+```text
+公式 CFOS / Starter + WWWK
+              |
+              v
+      revision と入力を検証
+              |
+              v
+          一時 worktree
+      + companion patch
+      + WWWK package / binding
+              |
+              v
+       test / build / dry-run
+              |
+       +------+------+
+       |             |
+       v             v
+   ローカル実行   Cloudflare へ再デプロイ
+```
+
+installer は、対象の Starter、CFOS、WWWK、companion patch の組を完全一致で検証する。
+未知の revision、patch 競合、必要な Worker / storage identity の欠損は自動修復せず
+fail-closed とする。複数の上流 version を推測で扱う互換層は作らない。upstream に必要な
+拡張契約が追加された場合は、対応する companion patch を縮小または削除する。
+
+既存の Starter deployment へ導入する場合は、account、Worker 名、Durable Object class、
+KV namespace、R2 bucket、認証設定を維持する。WWWK Worker だけを新しく追加し、Workshop
+を同じ名前で更新する。標準アンインストールは binding と companion 差分を外した公式構成へ
+戻すが、WWWK Worker とデータは保持する。データ消去は export を検討した後に行う別の
+明示的な破壊操作とする。
+
+手動の symbolic link は、installer が完成するまでの内部的なローカル開発手順に限定する。
+利用者向けの導入契約にはしない。詳細は [Installation](INSTALLATION.md) に記録する。
 
 ## エージェントとの境界
 
@@ -557,8 +598,8 @@ Bundle v1 の厳密な YAML スキーマは「ポータブルデータ」に定�
 ## 未決定事項
 
 - Agent Skill の自動読込みと更新方式、更新などの追加操作 API
-- 本番用 WWWK package の配布方法
-- インストールスクリプト、アップグレード、アンインストールの詳細
+- installer の最小 CLI、複数 revision への対応、upgrade 自動化
+- WWWK データだけを完全消去する具体的な手順
 - 検索件数の上限、高度な検索方式、UI、LLM、バックグラウンド処理
 - Source 更新を検知する時期と方法
 - Context Library と連携する専用 Adapter
