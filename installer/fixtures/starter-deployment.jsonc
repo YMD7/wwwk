@@ -1,0 +1,47 @@
+{
+  "accountId": "0123456789abcdef0123456789abcdef",
+  "workers": {
+    "workshop": {
+      "name": "fixture-workshop",
+      "route": { "workersDev": true }
+    },
+    "context": { "name": "fixture-context" },
+    "customGatekeeper": { "name": "fixture-custom-gatekeeper" }
+  },
+  "access": {
+    "issuer": "https://fixture.cloudflareaccess.com",
+    "audience": "fixture-audience",
+    "admins": ["admin@example.invalid"]
+  },
+  "aiGateway": {
+    "enabled": false,
+    "name": "fixture-ai-gateway",
+    "accountId": "0123456789abcdef0123456789abcdef",
+    "providers": [],
+    "workersAi": { "mode": "direct" }
+  },
+  "context": {
+    "sharingDomain": "fixture",
+    "kvNamespaceId": null
+  },
+  "customGatekeeper": {
+    "name": "Fixture",
+    "message": "Fixture integration."
+  },
+  "errorReporting": {
+    "enabled": false,
+    "environment": "fixture",
+    "release": null
+  },
+  "resources": {
+    "blueprintsKvNamespaceId": null,
+    "avatarsKvNamespaceId": null,
+    "blueprintContentBucket": null
+  },
+  "observability": {
+    "enabled": true,
+    "headSamplingRate": 1,
+    "logs": { "invocationLogs": false },
+    "traces": { "enabled": false, "headSamplingRate": 0.1 }
+  }
+}

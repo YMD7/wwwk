@@ -27,4 +27,8 @@ actual Workshop Worker名を入力として`GATEKEEPER_WWWK`と
 生成前に拒否する。
 
 Phase 6では、同じ絶対state pathをCFOS runnerから複数Workerの`wrangler dev`へ渡すことを
-確認した。Cloudflare deployとStarterへの接続解除は対象外である。
+確認した。Phase 7の`starter-installer.mjs`はStarter checkoutを変更せず、同じ固定tupleを
+integration worktreeへ再現して、接続と接続解除の生成設定、build、Wrangler dry-runを行う。
+外部`deployment.jsonc`はcanonical pathと0600相当を検証してread-onlyで読み、実値を含まない
+tracked fixtureだけをgenerated configへ書く。実値を保持しないlive runnerが未実装のため、
+`--apply`はfail-closedで拒否する。
