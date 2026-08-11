@@ -42,7 +42,7 @@ test("creates reciprocal service bindings without mutating inputs", () => {
   assert.deepEqual(result.workshop.services.at(-1), {
     binding: "GATEKEEPER_WWWK",
     service: "actual-wwwk-name",
-    entrypoint: "WwwkGatekeeper",
+    entrypoint: "GatekeeperVendor",
   });
   assert.equal(result.wwwk.services[0].service, "actual-workshop-name");
   assert.equal(workshopConfig.services.length, 1);
