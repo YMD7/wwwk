@@ -375,23 +375,77 @@ account の revoke は、同じ SQLite-backed Durable Object の transaction で
 
 ## ポータブルデータ
 
-ポータブルにする対象はシステムではなく、次のデータである。
+Phase 2 の Bundle v1 は、archive や filesystem に依存しない plain data として扱う。
+
+```ts
+type WwwkPortableBundle = {
+  files: Array<{
+    path: string;
+    content: string;
+  }>;
+};
+```
+
+構造は次に固定する。
 
 ```text
 bundle/
 ├── manifest.yaml
-├── sources/
-├── evidence/
-└── wiki/
+├── sources/<id>.md
+├── evidence/<id>.md
+└── wiki/<id>.md
+```
+
+`manifest.yaml` は次の 2 項目だけを持つ。
+
+```yaml
+format: wwwk
+version: 1
+```
+
+各文書は UTF-8 Markdown と YAML frontmatter で表現する。
+
+```yaml
+---
+id: 00000000-0000-4000-8000-000000000000
+type: evidence
+title: 文書タイトル
+content_hash: <本文UTF-8のSHA-256>
+created_at: 2026-08-11T00:00:00.123Z
+sources:
+  - id: 00000000-0000-4000-8000-000000000001
+    resource: /sources/00000000-0000-4000-8000-000000000001.md
+---
+Markdown本文
 ```
 
 - SQLite ファイルやテーブル構造をエクスポート形式にしない。
-- 文書 ID は SQLite の `rowid` などに依存しない、ストレージ非依存の安定 ID とする。
-- エクスポートを許可された 3 層データと生成依存リンクは、bundle だけで損失なく
-  表現する。
+- `id` は `crypto.randomUUID()` 由来の lowercase UUID v4 とし、path の ID と一致させる。
+- `type` は `source`、`evidence`、`wiki` に限定し、type ごとの directory と一致させる。
+- 本文は `content` と完全一致させ、`content_hash` は本文 UTF-8 の SHA-256 と一致させる。
+- `created_at` はミリ秒を持つ ISO 8601 とし、export 時は UTC 表記に正規化する。
+- Source は `sources` を持たない。Evidence は Source 1 件、Wiki は Evidence 1 件を
+  `id` と bundle-root からの絶対 resource path で参照する。
+- `metadata_json` の未知の JSON 互換値は frontmatter で保持する。`id`、`type`、`title`、
+  `content_hash`、`created_at`、`sources` は予約し、metadata による上書きを拒否する。
+- `generated` は保存済み metadata に存在するときだけ保持し、export 時に生成者情報を
+  推測または追加しない。
+- YAML のコメント、key 順、引用形式は保持せず、正規化した論理値を保持する。
 - import 時は、インデックスなどの実行データを bundle から再構築する。
 - `export -> 空の WwwkLibrary へ import` の往復で、論理データと生成依存リンクが
   一致することをテストする。
+
+### Import/export transaction
+
+export は live な Library の `documents` と `document_inputs` だけを読み、文書、hash、
+依存方向、利用可能性を検証して決定的な path 順で返す。embedded KV、capability、失効
+marker、`is_available`、SQL schema、index は含めない。
+
+import は manifest、path、frontmatter、hash、依存を解析し、JSON 互換 metadata へ
+正規化してから storage transaction を開始する。transaction 内では live 状態と
+`documents`、`document_inputs` が空であることを再確認し、全文書を `is_available = 1`
+として保存してから全生成依存リンクを保存する。YAML 解析、hash 計算、外部 I/O は
+transaction 内で実行しない。検証または保存に失敗した場合は部分状態を残さない。
 
 ### エクスポート境界
 
@@ -409,8 +463,10 @@ bundle/
 
 ### OKF との対応
 
-ポータブルな Concept 文書は、OKF v0.2 を参考に、YAML frontmatter と Markdown 本文で
-表現する。OKF は交換形式として利用し、実行時ストレージにはしない。
+ポータブルな Concept 文書は、OKF v0.2 の YAML frontmatter、Markdown、`sources`、
+bundle-root 相対 path、未知 key の保持という考え方を参考にする。Bundle v1 は WWWK の
+3 層と厳格な依存規則に限定した独自 profile であり、OKF 完全準拠や任意の OKF bundle
+との互換性を表明しない。OKF を実行時ストレージや権限モデルにはしない。
 
 | ポータブル形式 | 実行時表現 |
 | --- | --- |

@@ -7,6 +7,13 @@ import {
 import { RpcTarget } from "capnweb";
 import { skipRpcValidation, validateRpc } from "capnweb-validate";
 import AGENT_SKILL from "../skills/wwwk/SKILL.md";
+import {
+  parseBundle,
+  serializeBundle,
+  sha256Text,
+  type BundleDocument,
+  type WwwkPortableBundle,
+} from "./bundle.js";
 import type {
   WwwkDocument,
   WwwkDocumentDraft,
@@ -99,15 +106,8 @@ function boundAgentCatalog(
   };
 }
 
-type StoredDocument = {
-  id: string;
-  type: WwwkDocumentType;
-  title: string;
-  content: string;
-  contentHash: string;
-  metadataJson: string;
+type StoredDocument = BundleDocument & {
   isAvailable: number;
-  createdAt: number;
 };
 
 type StoredInput = {
@@ -215,15 +215,6 @@ function escapeMarkdownInline(value: string): string {
     .replace(/([\\`*_{}\[\]()<>#+\-.!|])/g, "\\$1");
 }
 
-async function sha256(content: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(content),
-  );
-  return Array.from(new Uint8Array(digest), (byte) =>
-    byte.toString(16).padStart(2, "0")).join("");
-}
-
 function buildSkillMessage(args: string): string {
   const usesArgument = /\$ARGUMENT(?![A-Za-z0-9_[])/.test(AGENT_SKILL);
   const expanded = AGENT_SKILL.replace(
@@ -317,9 +308,9 @@ export class WwwkSessionImpl extends RpcTarget {
 
     const createdAt = Date.now();
     const [sourceHash, evidenceHash, wikiHash] = await Promise.all([
-      sha256(input.source.content),
-      sha256(input.evidence.content),
-      sha256(input.wiki.content),
+      sha256Text(input.source.content),
+      sha256Text(input.evidence.content),
+      sha256Text(input.wiki.content),
     ]);
     const batch: IngestBatch = {
       source: {
@@ -571,6 +562,57 @@ export class WwwkLibrary extends DurableObject<Cloudflare.Env> {
         "DELETE FROM documents WHERE id IN (?, ?, ?)",
         ...documentIds,
       );
+    });
+  }
+
+  async exportBundle(): Promise<WwwkPortableBundle> {
+    this.assertLive();
+    const documents = this.ctx.storage.sql.exec<StoredDocument>(
+      `SELECT id, type, title, content,
+         content_hash AS contentHash,
+         metadata_json AS metadataJson,
+         is_available AS isAvailable,
+         created_at AS createdAt
+       FROM documents
+       ORDER BY type, id`,
+    ).toArray();
+    if (documents.some((document) => document.isAvailable !== 1)) {
+      throw new Error("WWWK cannot export unavailable documents.");
+    }
+    const inputs = this.ctx.storage.sql.exec<StoredInput>(
+      `SELECT document_id AS documentId, input_id AS inputId
+       FROM document_inputs
+       ORDER BY document_id, input_id`,
+    ).toArray();
+    const bundle = await serializeBundle(documents, inputs);
+    this.assertLive();
+    return bundle;
+  }
+
+  async importBundle(bundle: WwwkPortableBundle): Promise<void> {
+    this.assertLive();
+    const parsed = await parseBundle(bundle);
+    this.ctx.storage.transactionSync(() => {
+      this.assertLive();
+      const documentCount = this.ctx.storage.sql.exec<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM documents",
+      ).one().count;
+      const inputCount = this.ctx.storage.sql.exec<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM document_inputs",
+      ).one().count;
+      if (documentCount !== 0 || inputCount !== 0) {
+        throw new Error("WWWK bundle import requires an empty Library.");
+      }
+      for (const document of parsed.documents) {
+        this.insertDocument({ ...document, isAvailable: 1 });
+      }
+      for (const input of parsed.inputs) {
+        this.ctx.storage.sql.exec(
+          "INSERT INTO document_inputs (document_id, input_id) VALUES (?, ?)",
+          input.documentId,
+          input.inputId,
+        );
+      }
     });
   }
 
