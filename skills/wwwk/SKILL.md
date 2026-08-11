@@ -25,4 +25,16 @@ WWWKは所有者専用の個人Wikiである。利用可能な場合は、一般
 - titleとcontentだけを渡し、ID、型、リンク、所有者、hashは追加しない。
 - 保存はCFOSの承認後にだけ行われる。承認結果を待ってから続行する。
 
+## Linked Notion Page
+
+ユーザーが接続済みのNotion Pageを保存するよう明示した場合は、次の手順だけを使う。
+
+1. Notion bindingの`$cfosLinkedSourceHandle()`を呼び、CFOS発行のhandleを得る。
+2. `source: { kind: "linked", sourceHandle }`を`ingest()`へ渡す。
+3. EvidenceとWikiには、取得済みの本文を転記せず、保存意図に必要なtitleとcontentだけを渡す。
+
+- AgentはNotion Pageの本文、title、URLをSourceとして組み立てたり送信したりしない。
+- handleを会話、Evidence、Wiki、metadata、ログへ出さない。
+- WWWKはCFOS Brokerを通じて本文と来歴を取得し、CFOSの監査と承認に従って保存する。
+
 $ARGUMENT

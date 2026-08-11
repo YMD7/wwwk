@@ -440,7 +440,7 @@ describe("WwwkGatekeeper", () => {
         expect(state.storage.sql.exec<{ count: number }>(
           "SELECT COUNT(*) AS count FROM linked_sources",
         ).one().count).toBe(1);
-        expect(state.storage.kv.get(`sourceAccess:${source!.id}`)).toBeDefined();
+        expect(state.storage.kv.get(`linkedSourceHandle:${source!.id}`)).toBeDefined();
       },
     );
 
@@ -463,7 +463,7 @@ describe("WwwkGatekeeper", () => {
         expect(state.storage.sql.exec<{ count: number }>(
           "SELECT COUNT(*) AS count FROM linked_sources",
         ).one().count).toBe(0);
-        expect(state.storage.kv.get("sourceAccess:missing")).toBeUndefined();
+        expect(state.storage.kv.get("linkedSourceHandle:missing")).toBeUndefined();
       },
     );
 
@@ -489,6 +489,22 @@ describe("WwwkGatekeeper", () => {
         ).one().count).toBe(0);
       },
     );
+  });
+
+  it("Notion Page以外のLinked Sourceを拒否する", async () => {
+    const parent = testEnv.WWWK_TEST_PARENT.getByName("linked-parent");
+    await parent.configureSharing(false);
+    await parent.setLinkedSourceRevoked(false);
+    await parent.setLinkedSourceKind("other", "NotionPage");
+    await expect(parent.ingestLinkedOutcome("linked-invalid")).resolves.toEqual({
+      ok: false,
+      error: expect.stringContaining("supports only linked Notion pages"),
+    });
+    await parent.setLinkedSourceKind("notion", "OtherType");
+    await expect(parent.ingestLinkedOutcome("linked-invalid")).resolves.toEqual({
+      ok: false,
+      error: expect.stringContaining("supports only linked Notion pages"),
+    });
   });
 
   it("revoke後は再起動しても旧Facetとpending actionを拒否する", async () => {

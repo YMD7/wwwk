@@ -141,7 +141,7 @@ type LinkedSourceIngest = LinkedSourceRecord & {
   sourceHandle: string;
 };
 
-type SourceAccessDescription = {
+type LinkedSourceDescription = {
   vendorId: string;
   url: string;
   title: string;
@@ -149,7 +149,7 @@ type SourceAccessDescription = {
 };
 
 type SourceAccessBroker = {
-  describe(handle: string): Promise<SourceAccessDescription | null>;
+  describe(handle: string): Promise<LinkedSourceDescription | null>;
   openReadSession(handle: string): Promise<unknown | null>;
 };
 
@@ -201,12 +201,12 @@ function actionKey(actionId: number): string {
   return `action:${actionId}`;
 }
 
-function sourceAccessKey(sourceId: string): string {
-  return `sourceAccess:${sourceId}`;
+function linkedSourceHandleKey(sourceId: string): string {
+  return `linkedSourceHandle:${sourceId}`;
 }
 
-function validateSourceAccessDescription(
-  description: SourceAccessDescription,
+function validateLinkedSourceDescription(
+  description: LinkedSourceDescription,
 ): void {
   if (description.vendorId !== "notion" || description.tsType !== "NotionPage") {
     throw new Error("WWWK supports only linked Notion pages.");
@@ -245,7 +245,7 @@ async function readLinkedNotionSourceWithBroker(
   if (!input.sourceHandle) throw new Error("Linked source handle is required.");
   const description = await broker.describe(input.sourceHandle);
   if (!description) throw new Error("Linked source handle is unavailable.");
-  validateSourceAccessDescription(description);
+  validateLinkedSourceDescription(description);
   const opened = await broker.openReadSession(input.sourceHandle);
   const session = getNotionPageSession(opened);
   try {
@@ -698,7 +698,7 @@ export class WwwkLibrary extends DurableObject<Cloudflare.Env> {
             batch.linked.tsType,
           );
           this.ctx.storage.kv.put(
-            sourceAccessKey(batch.linked.sourceId),
+            linkedSourceHandleKey(batch.linked.sourceId),
             batch.linked.sourceHandle,
           );
         }
@@ -748,7 +748,7 @@ export class WwwkLibrary extends DurableObject<Cloudflare.Env> {
         ...documentIds,
       ).toArray();
       for (const linked of linkedSourceIds) {
-        this.ctx.storage.kv.delete(sourceAccessKey(linked.sourceId));
+        this.ctx.storage.kv.delete(linkedSourceHandleKey(linked.sourceId));
       }
       this.ctx.storage.sql.exec(
         "DELETE FROM documents WHERE id IN (?, ?, ?)",
@@ -829,7 +829,7 @@ export class WwwkLibrary extends DurableObject<Cloudflare.Env> {
         "SELECT source_id AS sourceId FROM linked_sources",
       ).toArray();
       for (const linked of linkedSourceIds) {
-        this.ctx.storage.kv.delete(sourceAccessKey(linked.sourceId));
+        this.ctx.storage.kv.delete(linkedSourceHandleKey(linked.sourceId));
       }
       this.ctx.storage.sql.exec("DELETE FROM document_inputs");
       this.ctx.storage.sql.exec("DELETE FROM documents");
@@ -862,12 +862,12 @@ export class WwwkLibrary extends DurableObject<Cloudflare.Env> {
   private async reauthorizeLinkedSource(linked: LinkedSourceRecord): Promise<boolean> {
     try {
       const sourceHandle = this.ctx.storage.kv.get<string>(
-        sourceAccessKey(linked.sourceId),
+        linkedSourceHandleKey(linked.sourceId),
       );
       if (!sourceHandle) throw new Error("Linked source handle is missing.");
       const description = await this.env.CFOS_SOURCE_ACCESS_BROKER.describe(sourceHandle);
       if (!description) throw new Error("Linked source handle is unavailable.");
-      validateSourceAccessDescription(description);
+      validateLinkedSourceDescription(description);
       if (
         description.vendorId !== linked.vendor ||
         description.url !== linked.resource ||
@@ -908,7 +908,7 @@ export class WwwkLibrary extends DurableObject<Cloudflare.Env> {
          WHERE id IN (SELECT id FROM affected)`,
         sourceId,
       );
-      this.ctx.storage.kv.delete(sourceAccessKey(sourceId));
+      this.ctx.storage.kv.delete(linkedSourceHandleKey(sourceId));
     });
   }
 

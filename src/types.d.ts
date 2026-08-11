@@ -49,7 +49,6 @@ export interface WwwkDocumentDraft {
   content: string;
 }
 
-/** CFOS が発行する、外部原典への永続可能な読取 capability。 */
 /** Agent が本文を作らず、CFOS handle から取り込む外部原典。 */
 export interface WwwkLinkedSourceInput {
   /** Linked Source を示す固定値。 */

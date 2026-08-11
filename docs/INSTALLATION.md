@@ -65,6 +65,10 @@ wwwk/
 Agent Skill は `skills/wwwk/SKILL.md` に同梱し、CFOS の Slash Command Provider から
 `/wwwk` として読み込む。自動読込みは行わない。
 
+Phase 3 の Linked Notion Page には、CFOS 側に `SourceAccessBroker` entrypoint と
+`CFOS_SOURCE_ACCESS_BROKER` service bindingを含む対応revisionが必要である。WWWKは
+opaque handleだけを保存し、このローカルCFOS側のBrokerなしにはLinked Sourceを読めない。
+
 ## ローカル導入
 
 ### 方式の位置づけ

@@ -78,45 +78,11 @@ export class TestApprovalQueue extends WorkerEntrypoint {
   }
 }
 
-let linkedSourceRevoked = false;
-
-class TestNotionPageSession extends RpcTarget {
-  async getMetadata() {
-    if (linkedSourceRevoked) throw new Error("Linked source access was revoked.");
-    return {
-      title: "連携テストページ",
-      url: "https://www.notion.so/example/linked-page",
-      lastEditedAt: new Date("2026-08-11T00:00:00.123Z"),
-    };
-  }
-
-  async getContent(): Promise<string> {
-    if (linkedSourceRevoked) throw new Error("Linked source access was revoked.");
-    return "これはNotionから取得した検証用の本文です。";
-  }
-
-  [Symbol.dispose](): void {}
-}
-
-/** 永続化できる CFOS SourceAccess を模倣するテスト専用 entrypoint。 */
-export class TestSourceAccess extends WorkerEntrypoint {
-  async describe() {
-    return {
-      vendorId: "notion",
-      url: "https://www.notion.so/example/linked-page",
-      title: "連携テストページ",
-      tsType: "NotionPage",
-    };
-  }
-
-  async openReadSession(): Promise<RpcStub<TestNotionPageSession>> {
-    return new NativeRpcStub(new TestNotionPageSession());
-  }
-}
-
 let brokerHandle: string | undefined;
 let brokerRevoked = false;
 let brokerSessionCount = 0;
+let brokerVendorId = "notion";
+let brokerTsType = "NotionPage";
 
 class TestBrokerReadSession extends RpcTarget {
   constructor(private readonly sessionId: number) {
@@ -157,10 +123,10 @@ export class TestSourceBroker extends WorkerEntrypoint {
       return null;
     }
     return {
-      vendorId: "notion",
+      vendorId: brokerVendorId,
       url: "https://www.notion.so/example/linked-page",
       title: "連携テストページ",
-      tsType: "NotionPage",
+      tsType: brokerTsType,
     };
   }
 
@@ -254,9 +220,17 @@ export class WwwkTestParent extends DurableObject<Cloudflare.Env> {
     });
   }
 
+  async ingestLinkedOutcome(accountId: string) {
+    return capture(() => this.ingestLinked(accountId));
+  }
+
   setLinkedSourceRevoked(revoked: boolean): void {
-    linkedSourceRevoked = revoked;
     brokerRevoked = revoked;
+  }
+
+  setLinkedSourceKind(vendorId: string, tsType: string): void {
+    brokerVendorId = vendorId;
+    brokerTsType = tsType;
   }
 
   configureSharing(shared: boolean): void {

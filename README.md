@@ -13,7 +13,9 @@
 ローカル版 CFOS から `search()`、`read()`、`ingest()` を利用できる Owned Source MVP
 を提供する。静的 Agent Skill は `/wwwk` から読み込む。Phase 2 では、3 層と生成依存を
 Markdown と YAML frontmatter の Bundle v1 で往復できる Core portability を追加した。
-bundle を運ぶ UI、CLI、archive、本番 deploy、Linked Source はまだ対象外である。
+Phase 3では、CFOSのstable Brokerを通じたLinked Notion Pageの取込みを追加した。
+handle、外部binding、一時Sessionは保存・exportしない。bundleを運ぶUI、CLI、archive、
+本番deploy、Linked Sourceのexportはまだ対象外である。
 
 ローカル接続と検証方法は [Installation](docs/INSTALLATION.md) を参照する。
 
