@@ -8,6 +8,7 @@ declare namespace Cloudflare {
         tsType: string;
       } | null>;
       openReadSession(handle: string): Promise<unknown | null>;
+      registerSourceAccess(handle: string): Promise<string | null>;
     };
   }
 
