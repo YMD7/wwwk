@@ -3,7 +3,8 @@
 ## 状態
 
 本書は、確定した導入方針と現時点で判明している手順を記録する。
-WWWK package は未実装のため、実行可能なインストール手順はまだ提供しない。
+Phase 1 では、clone した CFOS のローカル開発サーバーへ symbolic link で接続する。
+クラウドへの deploy は行わない。
 
 ## 対応順序
 
@@ -25,8 +26,14 @@ wwwk/
 ├── DEVELOPMENT.md
 ├── .gitignore
 ├── package.json
+├── pnpm-lock.yaml
 ├── tsconfig.json
+├── vitest.config.ts
 ├── wrangler.jsonc
+├── worker-configuration.d.ts
+├── skills/
+│   └── wwwk/
+│       └── SKILL.md
 ├── docs/
 │   ├── ARCHITECTURE.md
 │   ├── INSTALLATION.md
@@ -35,11 +42,13 @@ wwwk/
 │   └── IMPLEMENTATION_PHASES.md
 ├── src/
 │   ├── index.ts
+│   ├── env.d.ts
+│   ├── text-modules.d.ts
 │   ├── types.d.ts
 │   └── types.txt -> types.d.ts
-├── __tests__/
-│   └── wwwk.test.ts
-└── vitest.config.ts
+└── __tests__/
+    ├── worker.ts
+    └── wwwk.test.ts
 ```
 
 - `types.d.ts` は Agent へ公開する Session API を定義する。
@@ -53,15 +62,16 @@ wwwk/
 - テストは自動 provision、singleton、個人専用境界を優先する。
 - UI、OAuth、hooks、background worker は初期構成へ含めない。
 
-CFOS の公式手順に従い、Session API を提案して合意を得た後に実装する。
+Agent Skill は `skills/wwwk/SKILL.md` に同梱し、CFOS の Slash Command Provider から
+`/wwwk` として読み込む。自動読込みは行わない。
 
 ## ローカル導入
 
 ### 方式の位置づけ
 
 symbolic link はローカル開発専用の接続方式とする。CFOS は
-`packages/gatekeeper-*` を走査して Gatekeeper を検出し、pnpm workspace も
-`packages/*` を対象とするため、この構成では最小限の変更で両方へ WWWK を認識させられる。
+`packages/gatekeeper-*` を走査して Gatekeeper を検出する。WWWK の依存関係は WWWK
+自身へ導入し、CFOS workspace の内部 package へ依存しない。
 
 `pnpm link` は package を `node_modules` へ接続する仕組みであり、CFOS の Gatekeeper
 検出条件を満たさないため使用しない。symbolic link を本番配布方式や恒久的な plugin
@@ -96,18 +106,20 @@ ln -s "$WWWK_ROOT" \
   "$CFOS_ROOT/packages/gatekeeper-wwwk"
 ```
 
-### 現時点で判明している手順
+### 手順
 
-1. 対応する CFOS revision を準備し、変更前にローカル起動を確認する。
-2. CFOS の `packages/gatekeeper-wwwk` から WWWK へ symbolic link を作る。
-3. CFOS のルートで `pnpm run-local` を実行し、CFOS を起動または再起動する。
-4. `GATEKEEPER_WWWK` binding と `GatekeeperVendor` の接続を確認する。
-5. WWWK の API、個人データの分離、Agent Skill の発見を検証する。
+1. 対応する CFOS revision を準備し、WWWK を接続する前に `pnpm run-local` で起動を
+   確認して停止する。
+2. WWWK のルートで `pnpm install`、`pnpm run types:check`、`pnpm test` を実行する。
+3. CFOS の `packages/gatekeeper-wwwk` から WWWK へ symbolic link を作る。
+4. CFOS のルートで `node run-dev-server.js --serve-frontend-assets` を実行する。
+5. `GATEKEEPER_WWWK` binding と `GatekeeperVendor` の自動接続を確認する。
+6. `/wwwk` で Agent Skill を読み込み、`ingest()`、`search()`、`read()` を検証する。
 
 CFOS の開発サーバーが Gatekeeper の検出と binding 生成を担うため、ローカル導入では
-Cloudflare アカウントへのデプロイを必要としない。`pnpm run-local` は変更を検出した場合、
-内部で `pnpm install` を実行する。WWWK の `WwwkLibrary` は SQLite-backed Durable
-Object として動作し、ローカルデータは CFOS の `.wrangler/state` 配下へ保存される。
+Cloudflare アカウントへのデプロイを必要としない。WWWK の依存関係は CFOS workspace
+ではなく WWWK 自身へ導入する。`WwwkLibrary` は SQLite-backed Durable Object として
+動作し、ローカルデータは CFOS の `.wrangler/state` 配下へ保存される。
 
 ## アンインストール
 
@@ -136,8 +148,9 @@ WWWK リポジトリ自体の削除はアンインストールに含めない。
 ポータブルデータの export を推奨する。
 
 CFOS の `.wrangler/state` 全体は削除しない。CFOS 本体やほかの Gatekeeper のローカル
-データも含まれるためである。WWWK のデータだけを安全に特定して消去する具体的な方法は、
-`WwwkLibrary` の実装時に決定する。
+データも含まれるためである。Phase 1 では CFOS の account revoke 契約を通して WWWK の
+文書と生成依存リンクを削除し、再作成を防ぐ永久失効 marker だけを残す。ローカル状態から
+WWWK の物理領域だけを削除する運用手順は、本番の接続管理と合わせて後続で決定する。
 
 ## 本番対応
 
