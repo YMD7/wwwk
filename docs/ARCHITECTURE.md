@@ -55,7 +55,10 @@ WWWK は、AI 向けの利用方法を 1 つの Agent Skill として提供す�
 - 共通の Skill と、ユーザーごとの非公開データを分離する。
 - 必須の Skill は WWWK 自身が提供し、Context Library の有無に依存させない。
 
-Skill の具体的な内容と、更新などの追加操作 API は未決定とする。
+ローカル MVP では静的な `skills/wwwk/SKILL.md` を package に同梱する。Gatekeeper の
+`getSlashCommandProvider()` が `/wwwk` として Skill を返し、`getAgentCatalog()` は
+Session の用途だけを Agent に提示する。Skill の自動読込み、Skill の更新方式、更新などの
+追加操作 API は未決定とする。
 
 ## 初期ユーザーフロー
 
@@ -144,8 +147,12 @@ interface WwwkInputRef {
 - `read()` は本文と生成入力を一緒に返す。Source の `inputs` は空、Evidence は Source、
   Wiki は Evidence を参照する。
 - 意味リンクは Markdown 本文に保持し、API の別フィールドへ重複させない。
-- 失効または利用不能な文書を検索結果へ含めず、`read()` は `null` を返す。
+- 文書単位で失効または利用不能な文書を検索結果へ含めず、`read()` は `null` を返す。
+  account 全体の revoke 後は Session の開始と全操作を拒否する。
 - データは CFOS の observation として認可、記録した後にだけ返す。
+- owner-only データを返す observation は `prohibitAllSharing` を指定する。既に共有中の
+  Gadget では結果を返さず、private Gadget でも最初の返却後は CFOS の契約により共有と
+  action が禁止される。このため初期フローでは、保存 action を先に完了してから検索する。
 - `list()`、`trace()`、ページングは、実測した必要性が出るまで追加しない。
 - `ingest()` は、ユーザーが指定した 1 つのテキストを Source、Evidence、新規 Wiki と
   してまとめて保存する。`source.content` は指定された入力を変更せず受け取る。
@@ -359,6 +366,13 @@ revert も同期 SQL だけを 1 transaction で実行する。
 作るため、通常は外部依存を持たない。将来の更新 API は、この revert 契約を壊さないように
 別途設計する。
 
+### Account revoke
+
+account の revoke は、同じ SQLite-backed Durable Object の transaction で生成依存リンクと
+文書を削除し、embedded KV に永久失効 marker を保存する。再起動後も `search()`、`read()`、
+`ingest()`、pending action の適用、revert を拒否する。失効済み account は再作成せず、再接続
+が必要になった場合は別 account として扱う。
+
 ## ポータブルデータ
 
 ポータブルにする対象はシステムではなく、次のデータである。
@@ -511,7 +525,7 @@ ID の参照先、検索、リンクと被リンクのインデックスは、�
 
 ## 未決定事項
 
-- Agent Skill の具体的な内容と、更新などの追加操作 API
+- Agent Skill の自動読込みと更新方式、更新などの追加操作 API
 - 本番用 WWWK package の配布方法
 - インストールスクリプト、アップグレード、アンインストールの詳細
 - 検索件数の上限、高度な検索方式、UI、LLM、バックグラウンド処理
