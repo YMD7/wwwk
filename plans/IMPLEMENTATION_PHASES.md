@@ -2,97 +2,144 @@
 
 ## 方針
 
-各フェーズは、ローカル利用へ近づく観測可能なゴールを 1 つ持つ。現在のフェーズが
-完了するまで次を実装しない。受入条件に直接関係しない網羅的なテストや将来向けの
-仕組みは後回しにする。
+各フェーズは観測可能なゴールを 1 つ持ち、作業ブランチと PR を分ける。受入条件に直接
+関係しない抽象化、複数 version 対応、網羅的なテストは後回しにする。現在のフェーズが
+完了するまで次を実装しない。
 
-現在地: Phase 0、Phase 1、Phase 2 は完了。Phase 3 はレビュー中。
+現在地: Phase 0 から Phase 4 は完了。次は Phase 5 の installer PoC。
 
-## Phase 0: 開発準備
+## 導入方式の決定
 
-**ゴール:** 同じ手順で小さなフェーズを安全に開発、レビュー、統合できる。
+- 利用者へ WWWK プロジェクト版の CFOS / Starter fork を要求しない。
+- 検証済みの公式 Starter、CFOS、WWWK、companion patch の組を完全一致で扱う。
+- installer は利用者の checkout を変更せず、一時 worktree へ差分を適用する。
+- Cloudflare 上では、同じ Worker と保存資源の identity を保って WWWK 対応 version を
+  再デプロイする。
+- 標準アンインストールは接続だけを外し、データ消去は別フェーズにする。
+- upstream upgrade の自動追従と複数 version 対応は初期実装へ含めない。
 
-完了条件:
+## 既存実装への影響
 
-- `main <- develop <- 作業ブランチ` の役割と PR フローが文書化されている。
-- `.worktrees/` が標準の作業場所として用意され、Git の追跡対象外になっている。
-- 設計文書が `docs/` に整理され、参照切れがない。
-- 後続フェーズのゴールと順序が定義されている。
+Phase 1 から Phase 4 の WWWK Core、SQLite schema、Bundle v1、Linked Source、observer
+検証は維持する。データ移行や Session API の変更は不要である。
 
-## Phase 1: ローカル Owned Source MVP
+導入境界では次を変更する。
 
-**ゴール:** ローカル版 CFOS の Agent が、明示された 1 つのテキストを個人 Wiki へ
-保存し、後から検索して Source まで辿れる。
+- ローカル CFOS にだけ存在する companion commit 群を、対応する公式 CFOS revision 専用の
+  review 可能な patch として WWWK repository で追跡する。
+- `wrangler.jsonc` の固定されたローカル Worker 名を本番契約にせず、installer が実際の
+  Workshop Worker 名を使う一時設定を生成する。
+- 手動 symbolic link は内部開発手順へ降格し、利用者向け手順を installer に置き換える。
+- 既存の CFOS focused test を patch の検証に再利用し、同じ契約のテストを WWWK 側へ
+  重複実装しない。
+- 現在の CFOS companion worktree は、patch の出典を確定して WWWK で再現できるまで
+  削除しない。
 
-完了条件:
+Phase 5 開始時点の既知の基準は次のとおりである。
 
-- CFOS が WWWK Gatekeeper を検出し、クラウドへの deploy なしで接続できる。
-- Agent Skill から `ingest()`、`search()`、`read()` を利用できる。
-- 承認後だけ 3 層と 2 つの生成依存リンクが 1 transaction で保存される。
-- Wiki の検索結果から Evidence、Source を辿れ、Source 本文が入力と一致する。
-- 再起動後も保存内容が残り、ユーザー間で Library が分離される。
-- 拒否または失敗した書込みが残らないことを、最小の自動確認とローカル操作で確認する。
+- 公式 Starter `93f14df` は CFOS `bf7f762` を submodule に固定している。
+- companion差分は公式CFOS `8b08672`をbase、ローカル`7964294`をheadとしている。
+- Starter の固定 revision と companion base は一致しない。installer はどちらかへ推測で
+  合わせず、Starter を `8b08672` で検証できるかを最初に実証する。
+- WWWK の基底 `wrangler.jsonc` は Broker の service 名をローカル用
+  `workshop-backend` に固定している。本番では実際の Workshop Worker 名へ置き換えた
+  一時設定が必要である。
 
-対象外: Linked Source、import/export、高度な検索、UI、本番 deploy。
+## 完了済み
 
-## Phase 2: ポータブルな import/export
+### Phase 0: 開発準備
 
-**ゴール:** Owned Source、Evidence、Wiki、生成依存リンクを、実行環境に依存しない
-bundle として持ち運べる。
+**ゴール:** 小さなフェーズを worktree、PR、review で安全に統合できる。
 
-完了条件:
+### Phase 1: ローカル Owned Source MVP
 
-- Markdown、YAML frontmatter、`manifest.yaml` で bundle を export できる。
-- 空の `WwwkLibrary` へ import し、論理データと生成依存リンクが一致する。
-- capability、権限状態、SQLite、index、secret が bundle に含まれない。
+**ゴール:** 明示されたテキストを 3 層で保存し、Wiki から Source まで辿れる。
 
-対象外: 任意の OKF bundle との完全互換、定期 export、Linked Source の全文 export。
+### Phase 2: ポータブルな import/export
 
-## Phase 3: 最初の Linked Source
+**ゴール:** Owned Source、Evidence、Wiki、生成依存を Bundle v1 で往復できる。
 
-**ゴール:** allowlist した Notion Page を、CFOS の読取権限に従ってSource revision
-として取り込める。
+### Phase 3: 最初の Linked Source
 
-完了条件:
+**ゴール:** Notion Page を CFOS の読取権限と stable Broker を通して取り込める。
 
-- WWWK が認証情報、外部binding、一時Sessionを保持せず、CFOS発行のopaque handleを
-  stable Brokerへ渡して本文と来歴を取得する。
-- 再起動後に接続を再利用でき、失効または再認可失敗時は派生データも fail-closed になる。
-- 参照と失効が CFOS の監査境界を通る。
+### Phase 4: 共有 Gadget の安全な参照
 
-対象外: 汎用 Source protocol、複数 provider、更新の自動検知。
+**ゴール:** 共同利用者が全 Linked Source を現在参照できる場合だけ WWWK observation を
+利用できる。
 
-## Phase 4: 共有 Gadget の安全な参照
+## Phase 5: Version 固定 installer PoC
 
-**ゴール:** 共同利用者が全 Linked Source を現在参照できる場合だけ、WWWK 由来の
-Gadget observation を利用できる。
-
-**現在地:** 実装済み（review待ち）。
-
-完了条件:
-
-- 生成依存を Source revision まで決定論的に辿る。
-- CFOS の Broker による全件検証が成功した場合だけ observation を許可する。
-- Owned Source、拒否、障害、不明な依存を fail-closed で扱う。
-- 観測済みの生成依存だけをobserver要件にし、同一Overseer/workspace外のSourceは
-  fail-closedで拒否する。
-
-対象外: Wiki の直接共有、Owned Source の共有ポリシー。
-
-## Phase 5: Cloudflare OS Starter 対応
-
-**ゴール:** ローカル MVP と同じ中核実装を、`cloudflare-os-starter` 構成へ導入して
-Cloudflare 上で利用できる。
+**ゴール:** 公式 CFOS / Starter を直接変更せず、現在の WWWK 統合を一時 worktree で
+決定論的に再現できることを実証する。
 
 完了条件:
 
-- WWWK Worker と service binding を再現可能な手順で deploy できる。
-- 接続解除とデータ消去を分離した install/uninstall 手順がある。
-- ユーザー分離、承認、永続化を本番構成で確認する。
+- 対応する Starter、CFOS、WWWK、companion patch の revision を 1 組だけ記録する。
+- 現在の CFOS companion差分を、対応 revisionに完全一致で適用できるtracked patchへする。
+- patch の出典、license、secret、個人情報、利用者固有 path を確認し、commit metadata を
+  配布物へ混ぜない。
+- 一時 worktree へ patch、WWWK package、双方向 service binding を再現できる。
+- Starter `93f14df` の deployment generator が CFOS `8b08672` と互換であることを
+  test と dry-run で確認する。成立しない場合は実装を広げず計画を見直す。
+- WWWK と CFOS の既存 focused test、build、Wrangler dry-run が統合後の構成で成功する。
+- 同じ入力で再実行した統合差分が一致し、利用者の checkout に変更が残らない。
+- 未対応 revision、patch 競合、設定不足を変更前に fail-closed で拒否する。
+- ローカル状態の永続化方法と Starter の既存資源再利用方法を、実測結果として次フェーズへ
+  記録する。
 
-対象外: 配布の自動化、upgrade 機構、運用上不要な追加サービス。
+対象外: Cloudflare への実 deploy、完成した利用者向け CLI、複数 version 対応、upgrade、
+データ消去。
+
+## Phase 6: ローカル installer MVP
+
+**ゴール:** 公式 CFOS clone を変更せず、1 つの文書化された入口から WWWK 対応の
+ローカル CFOS を起動できる。
+
+完了条件:
+
+- installer が Phase 5 の統合処理を再利用し、専用の一時 worktree で CFOS を起動する。
+- 再起動と installer の再実行後も、同じ CFOS / WWWK ローカルデータを利用できる。
+- `ingest()`、`search()`、`read()`、Linked Notion、共有 observer の既存確認が通る。
+- 接続解除後も WWWK データを保持し、再接続時に利用できる。
+- 利用者の checkout、Git履歴、CFOS全体の`.wrangler` stateを破壊しない。
+
+対象外: Cloudflare deploy、GUI installer、完全消去、複数 version 対応。
+
+## Phase 7: Starter への install / disconnect
+
+**ゴール:** 新規または既存の公式 Starter deploymentへWWWKを追加し、データを残したまま
+安全に接続解除できる。
+
+完了条件:
+
+- installer は既存の account、Worker、Durable Object、KV、R2、Access の identity を
+  確認し、変更予定を secret なしで提示する。
+- WWWK Worker、Workshop の順で同じ対応組を再現可能にデプロイする。
+- ユーザー分離、approval、永続化、Linked Source、共有 observer を本番構成で確認する。
+- 同じ対応組への再実行が不要な資源を増やさず成功する。
+- disconnect は双方向 binding を安全な順序で外し、公式構成を同じ Workshop Worker へ
+  戻す。WWWK Worker は broker binding を外すが、Durable Object class とデータを保持する。
+- 再接続後に保持した WWWK データを利用できる。
+- 失敗時に利用者のcheckoutを変更せず、既存の有効なWorkshop versionを失わない。
+
+対象外: 公式 hosted deploy、完全消去、自動 upgrade、複数 version 対応、配布 UI。
+
+## Phase 8: WWWK データの完全消去
+
+**ゴール:** 接続解除済みの環境から、利用者が明示した WWWK データだけを消去できる。
+
+完了条件:
+
+- export の要否、対象 Worker、対象 Durable Object namespace、不可逆性を実行前に示す。
+- 明示確認後だけ WWWK Worker とデータを削除する。
+- CFOS 本体、ほかの Gatekeeper、共有 KV / R2、ローカル state 全体を削除しない。
+- ローカルと Cloudflare の削除対象、確認方法、回復可能性を文書化する。
+
+対象外: 一般的なデータ保持ポリシー、定期削除、組織向け retention automation。
 
 ## 未計画
 
 高度な検索、UI、Source 更新の自動検知、複数 Source の同時取込み、既存 Wiki の自動統合、
-background worker は、実利用から必要性が確認された時点でフェーズを追加する。
+background worker、公式 hosted deploy、複数 revision 対応、upgrade 自動化は、実利用から
+必要性が確認された時点でフェーズを追加する。
