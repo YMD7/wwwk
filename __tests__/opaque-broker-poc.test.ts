@@ -1,0 +1,31 @@
+import { env } from "cloudflare:workers";
+import { abortAllDurableObjects, reset } from "cloudflare:test";
+import { afterEach, expect, it } from "vitest";
+import type { OpaqueHandlePoc, TestSourceBroker } from "./worker.js";
+
+const testEnv = env as unknown as {
+  OPAQUE_HANDLE_POC: DurableObjectNamespace<OpaqueHandlePoc>;
+  CFOS_SOURCE_ACCESS_BROKER: Fetcher<TestSourceBroker>;
+};
+
+afterEach(async () => {
+  await reset();
+});
+
+it("persists only an opaque handle and fails closed after Broker revocation", async () => {
+  const handle = await testEnv.CFOS_SOURCE_ACCESS_BROKER.issue();
+  const library = testEnv.OPAQUE_HANDLE_POC.getByName("owner-a");
+
+  await library.ingest(handle);
+  expect(await library.storedHandle()).toBe(handle);
+  expect(await library.read()).toBe("fresh-session-1");
+  expect(await library.read()).toBe("fresh-session-2");
+
+  await abortAllDurableObjects();
+  const restarted = testEnv.OPAQUE_HANDLE_POC.getByName("owner-a");
+  expect(await restarted.storedHandle()).toBe(handle);
+  expect(await restarted.read()).toBe("fresh-session-3");
+
+  await testEnv.CFOS_SOURCE_ACCESS_BROKER.revoke(handle);
+  await expect(restarted.read()).resolves.toBeNull();
+});
