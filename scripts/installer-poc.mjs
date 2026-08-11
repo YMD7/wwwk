@@ -52,7 +52,7 @@ export function createIntegrationConfigs({
       services: [...workshopConfig.services, {
         binding: wwwkBinding,
         service: wwwkWorkerName,
-        entrypoint: "WwwkGatekeeper",
+        entrypoint: "GatekeeperVendor",
       }],
     },
     wwwk: {

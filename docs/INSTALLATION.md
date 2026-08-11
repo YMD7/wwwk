@@ -27,7 +27,8 @@ project cwdでbuildする最小互換patchも必要とする。両repositoryの�
 ## 導入モデル
 
 WWWK は独立した Gatekeeper Worker であり、Workshop の `GATEKEEPER_WWWK` service binding
-から接続する。Linked Source には逆方向の `CFOS_SOURCE_ACCESS_BROKER` binding も必要になる。
+から `GatekeeperVendor` entrypoint へ接続する。Linked Source には逆方向の
+`CFOS_SOURCE_ACCESS_BROKER` binding も必要になる。
 
 公式 CFOS の現行契約だけでは、stable Broker と共有 Gadget の observer 検証を表現できない。
 そのため、installer は WWWK repository で追跡された companion patch を一時 worktree の
