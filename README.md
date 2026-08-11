@@ -18,8 +18,9 @@ export せず、外部 binding と一時 Session も保存しない。
 
 利用者へ特定の CFOS fork を要求せず、対応する公式 CFOS と
 `cloudflare-os-starter`へ、version 固定の installer が必要な差分を一時的に適用する方針を
-採用する。installer と Cloudflare 上での本番導入は未実装である。bundle を運ぶ UI、CLI、
-archive、Linked Source の export もまだ対象外とする。
+採用する。Phase 5では固定revision向けのpatch、互換lockfile、binding生成PoCを追跡している。
+利用者向けinstallerとCloudflare上での本番導入は未実装である。bundleを運ぶUI、CLI、archive、
+Linked Sourceのexportもまだ対象外とする。
 
 導入契約と現在の実装状況は [Installation](docs/INSTALLATION.md) を参照する。
 

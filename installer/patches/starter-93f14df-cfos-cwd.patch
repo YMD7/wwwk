@@ -1,0 +1,25 @@
+diff --git a/scripts/deploy.mjs b/scripts/deploy.mjs
+index 7dfed6f23bb229917f871a397a8c70cba3bf6c74..f4cf5b4bd8f768fb935c30d8b4e142043ee23fec 100644
+--- a/scripts/deploy.mjs
++++ b/scripts/deploy.mjs
+@@ -385,16 +385,17 @@ function requireSubmodule() {
+ }
+
+ function build(config) {
+-  run(["--dir", "cloudflare-os", "--filter", "@gadgets/gatekeeper-context", "build"]);
++  const cfosRoot = join(root, "cloudflare-os");
++  run(["--filter", "@gadgets/gatekeeper-context", "build"], cfosRoot);
+   run(["--dir", "packages/custom-gatekeeper", "run", "build"]);
+   if (config.errorReporting.enabled) {
+     run(["--dir", "packages/error-reporter", "run", "build"]);
+   }
+-  run(["--dir", "cloudflare-os", "--filter", "@gadgets/workshop-frontend", "build"], root, {
++  run(["--filter", "@gadgets/workshop-frontend", "build"], cfosRoot, {
+     ...process.env,
+     VITE_CF_ACCESS_MODE: "true",
+   });
+-  run(["--dir", "cloudflare-os", "--filter", "@gadgets/workshop-backend", "build"]);
++  run(["--filter", "@gadgets/workshop-backend", "build"], cfosRoot);
+ }
+
+ async function main() {
