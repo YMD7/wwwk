@@ -14,8 +14,8 @@
 を提供する。静的 Agent Skill は `/wwwk` から読み込む。Phase 2 では、3 層と生成依存を
 Markdown と YAML frontmatter の Bundle v1 で往復できる Core portability を追加した。
 Phase 3では、CFOSのstable Brokerを通じたLinked Notion Pageの取込みを追加した。
-handle、外部binding、一時Sessionは保存・exportしない。bundleを運ぶUI、CLI、archive、
-本番deploy、Linked Sourceのexportはまだ対象外である。
+handleは実行時状態として保存するがexportしない。外部bindingと一時Sessionは保存しない。
+bundleを運ぶUI、CLI、archive、本番deploy、Linked Sourceのexportはまだ対象外である。
 
 ローカル接続と検証方法は [Installation](docs/INSTALLATION.md) を参照する。
 
