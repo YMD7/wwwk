@@ -207,6 +207,7 @@ revision の組である。capability とポータブルな Source revision は�
 interface SourceAccessBroker {
   describe(handle: string): Promise<LinkedSourceDescription | null>;
   openReadSession(handle: string): Promise<unknown | null>;
+  registerSourceAccess(handle: string): Promise<string | null>;
 }
 ```
 
@@ -217,6 +218,8 @@ interface SourceAccessBroker {
 - `describe(handle)`はAdapter選択と来歴記録に必要な非秘密情報だけを返す。
 - `openReadSession(handle)`はCFOSでhandleを検証してから、呼び出すたび新しい一時Sessionを
   返す。失効、不明、障害は`null`でfail-closedにする。
+- `registerSourceAccess(handle)`は本文を開けない非bearer IDを返す。IDの信頼済み対応表は
+  CFOS側だけで保持し、共有時のobserver検証にだけ使う。
 - Session は observation-only の承認キューで開く。`authorizeObservation()` は CFOS の
   監査へ記録し、`submitAction()` と `bindHook()` は常に拒否する。
 - Source 参照は、元の Agent セッションではなく `linked-source` として監査する。
@@ -226,38 +229,28 @@ interface SourceAccessBroker {
 ## 共有 Gadget の observer 検証
 
 `WwwkLibrary` は所有者専用のままとし、共同利用者へ検索や直接参照を許可しない。一方、
-WWWK の情報を使った Gadget は、共同利用者が生成元の全 Source を現在参照できる場合に
-限り共有できる。
+WWWK の情報を使った Gadget は、実際に返す文書の生成元を共同利用者が現在参照できる
+場合に限り共有できる。
 
-- 権限判定には、Wiki から Evidence、Source revision まで辿った生成依存の閉包を使う。
-- Linked Source は、CFOS が Source ごとの同一 vendor verifier で検証する。
-- verifier、認証情報、外部 capability を WWWK へ渡さない。WWWK は CFOS が発行する
-  observer 検証 Broker から成功または拒否だけを受け取る。
-- 全 Source の検証成功時だけ observer を許可する。拒否、未登録、vendor 不一致、障害、
-  不明な依存は fail-closed とする。
-- Owned Source は既定で共有を拒否する。明示的な共有ポリシーは必要になるまで定義しない。
-- observer が Gadget を開くたびに生成依存の閉包を再検証する。
-- 新しい Source が生成依存へ加わった場合は再検証する。失敗した observer は
-  `excludeObservers` に指定し、CFOS に observation を遮断させる。
-- Broker capability と observer ごとの検証済み Source 集合は、共有 Gadget に属する
-  WWWK Gatekeeper の非ポータブルな実行状態として保持する。
-
-Broker への要求は、CFOS の信頼済み登録に結び付いた非ポータブルな opaque
-`sourceAccessId` で表す。ID や登録情報を frontmatter、export、権限の正本にしない。
-Broker の最小の意味は次のとおりとする。
-
-```ts
-interface ObserverVerificationBroker {
-  verifyLinkedSources(sourceAccessIds: string[]): Promise<void>;
-}
-```
-
-Workers RPC と SQLite-backed Durable Object を用いたローカル PoC で、複数 vendor の
-全件検証、fail-closed、追加 Source の再検証、Broker capability の embedded KV 保存と
-WWWK Gatekeeper の Durable Object 再起動後の再利用を確認した。これは文書単位で ACL
-を検証できる Source の実現可能性を示すものであり、外部サービスの読取権限を派生物の
-再共有許可と同一視しない。最終的な Broker の発行、失効、account 選択、Gatekeeper
-への受け渡し契約は未決定とする。
+- `search()` は結果集合、`read()` は返す文書から、Wiki -> Evidence -> Source revision の
+  閉包をSQLで求め、Linked Sourceの和集合を重複なく使う。`ingest()`だけでは共有要件を
+  追加しない。
+- CFOSはhandleから非bearerのopaque `sourceAccessId`を発行し、Source Gatekeeperとの対応を
+  Source側Overseerのembedded KVだけに保持する。WWWKはopaque IDを実行時KVにだけ保存する。
+- WWWKは`sourceAccessId`をSQL、frontmatter、export、Agent結果、action/observationの
+  descriptionへ含めない。verifier、認証情報、外部capability、Sessionも保持しない。
+- 観測時、CFOSは既存observerの選択済み同vendor accountからVerifierを取得し、全Source
+  Gatekeeperの`addObserver()`を検証してから認可する。1件でも拒否、失効、障害、未登録、
+  vendor不一致、不明な依存ならfail-closedにする。
+- 認可後かつ返却前に、WWWK GatekeeperはSourceAccess IDを観測済み集合へKV保存する。
+  失敗時の過剰記録は許容するが、返却後に未記録となる順序は許可しない。
+- observerのopenごとに、CFOSはこの観測済み集合からSource Gatekeeperを追加して再検証する。
+  新しいSourceを観測できないobserverは`excludeObservers`で遮断し、現行CFOSが分離できない
+  場合は観測を拒否する。
+- Owned Sourceや壊れた閉包はsource-aware認可に進めず、既存の`prohibitAllSharing`で共有を
+  拒否する。`WwwkLibrary`やbundleを直接共有しない。
+- 初期実装は同一Overseer/workspaceだけを対象にする。別workspace由来の`sourceAccessId`は
+  解決せず、明示的にfail-closedとする。
 
 ## 実行時ストレージ
 
@@ -570,8 +563,6 @@ Bundle v1 の厳密な YAML スキーマは「ポータブルデータ」に定�
 - Source 更新を検知する時期と方法
 - Context Library と連携する専用 Adapter
 - Linked Source の全文出力を許可する具体的な契約と reference-only bundle の詳細
-- Broker の発行、失効、account 選択、Gatekeeper への受け渡し契約
-- `sourceAccessId` の発行と信頼済み登録の具体的な実装
 - Owned Source の明示的な共有ポリシーと Wiki の直接共有機能
 
 初期スコープでは `WwwkLibrary` の直接利用は個人専用かつ非公開とする。共有 Gadget

@@ -491,6 +491,64 @@ describe("WwwkGatekeeper", () => {
     );
   });
 
+  it("Linked Sourceを返す前に観測済み集合へ記録し、拒否時も返さない", async () => {
+    const parent = testEnv.WWWK_TEST_PARENT.getByName("observer-parent");
+    await parent.configureSharing(false);
+    await parent.setLinkedSourceRevoked(false);
+    await parent.setSourceObservationAllowed(false);
+    const action = await parent.ingestLinked("observer-owner");
+    await parent.approve("observer-owner", action.actionId);
+
+    await expect(parent.searchOutcome("observer-owner", "連携ページ")).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining("cannot access"),
+    });
+    const observed = await parent.observedSourceAccessIds("observer-owner");
+    expect(observed).toHaveLength(1);
+    expect(action.description.description).not.toContain(observed[0]);
+
+    await abortAllDurableObjects();
+    const restartedParent = testEnv.WWWK_TEST_PARENT.getByName("observer-parent");
+    await expect(
+      restartedParent.observedSourceAccessIds("observer-owner"),
+    ).resolves.toEqual(observed);
+
+    await restartedParent.setSourceObservationAllowed(true);
+    await expect(
+      restartedParent.search("observer-owner", "連携ページ"),
+    ).resolves.toHaveLength(1);
+    await runInDurableObject(
+      testEnv.WWWK_LIBRARY.getByName("observer-owner"),
+      (_instance, state) => {
+        const stored = state.storage.sql.exec<{ metadataJson: string }>(
+          "SELECT metadata_json AS metadataJson FROM documents",
+        ).toArray();
+        expect(stored.every((row) => !row.metadataJson.includes(observed[0]))).toBe(true);
+        const columns = state.storage.sql.exec<{ name: string }>(
+          "SELECT name FROM pragma_table_info('linked_sources')",
+        ).toArray().map((column) => column.name);
+        expect(columns).not.toContain("source_access_id");
+      },
+    );
+  });
+
+  it("複数の検索結果のLinked Sourceを重複なくまとめて検証する", async () => {
+    const parent = testEnv.WWWK_TEST_PARENT.getByName("observer-union-parent");
+    await parent.configureSharing(false);
+    await parent.setSourceObservationAllowed(true);
+    const first = await parent.ingestLinked("observer-union-owner");
+    const second = await parent.ingestLinked("observer-union-owner");
+    await parent.approve("observer-union-owner", first.actionId);
+    await parent.approve("observer-union-owner", second.actionId);
+
+    await expect(
+      parent.search("observer-union-owner", "連携ページ"),
+    ).resolves.toHaveLength(2);
+    await expect(
+      parent.observedSourceAccessIds("observer-union-owner"),
+    ).resolves.toHaveLength(2);
+  });
+
   it("Notion Page以外のLinked Sourceを拒否する", async () => {
     const parent = testEnv.WWWK_TEST_PARENT.getByName("linked-parent");
     await parent.configureSharing(false);
