@@ -6,7 +6,7 @@
 完了するまで次を実装しない。受入条件に直接関係しない網羅的なテストや将来向けの
 仕組みは後回しにする。
 
-現在地: Phase 0、Phase 1、Phase 2 は完了。次は Phase 3。
+現在地: Phase 0、Phase 1、Phase 2 は完了。Phase 3 はレビュー中。
 
 ## Phase 0: 開発準備
 
@@ -50,12 +50,13 @@ bundle として持ち運べる。
 
 ## Phase 3: 最初の Linked Source
 
-**ゴール:** allowlist した 1 種類の外部原典を、CFOS の読取 capability に従って
-Source revision として取り込める。
+**ゴール:** allowlist した Notion Page を、CFOS の読取権限に従ってSource revision
+として取り込める。
 
 完了条件:
 
-- WWWK が認証情報を保持せず、`SourceAccess` から本文と来歴を取得する。
+- WWWK が認証情報、外部binding、一時Sessionを保持せず、CFOS発行のopaque handleを
+  stable Brokerへ渡して本文と来歴を取得する。
 - 再起動後に接続を再利用でき、失効または再認可失敗時は派生データも fail-closed になる。
 - 参照と失効が CFOS の監査境界を通る。
 

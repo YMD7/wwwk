@@ -38,7 +38,7 @@ export interface WwwkSession {
 
 /** 初期書込みでまとめて保存する 3 層の draft。 */
 export interface WwwkIngestInput {
-  source: WwwkDocumentDraft;
+  source: WwwkDocumentDraft | WwwkLinkedSourceInput;
   evidence: WwwkDocumentDraft;
   wiki: WwwkDocumentDraft;
 }
@@ -47,6 +47,14 @@ export interface WwwkIngestInput {
 export interface WwwkDocumentDraft {
   title: string;
   content: string;
+}
+
+/** Agent が本文を作らず、CFOS handle から取り込む外部原典。 */
+export interface WwwkLinkedSourceInput {
+  /** Linked Source を示す固定値。 */
+  kind: "linked";
+  /** CFOS が発行した非ポータブルかつ失効可能な opaque handle。 */
+  sourceHandle: string;
 }
 
 /** 検索に一致した文書の概要。 */

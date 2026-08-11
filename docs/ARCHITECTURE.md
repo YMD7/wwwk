@@ -180,7 +180,7 @@ Source revision は、来歴とは別に次の権限モードを持つ。
 
 - Owned Source は、WWWK の所有者が管理する独立したコピーであり、外部原典の再認可を
   必要としない。
-- Linked Source は、外部原典への有効な `SourceAccess` が利用権限の正本となる。
+- Linked Source は、外部原典への現在の読取権限をCFOS Brokerが確認する。
 - 外部原典に由来することを示す来歴は、Owned Source に変換した後も保持する。
 - 権限モードやポータブルなメタデータを、外部原典への権限付与に使わない。
 
@@ -190,52 +190,38 @@ Linked Source は、外部原典への実行時接続と、その接続を利用
 revision の組である。capability とポータブルな Source revision は分離して管理する。
 
 - 外部原典への接続、再認可、監査、失効は CFOS に委ねる。
-- WWWK は、永続的、読取専用、監査可能な CFOS capability を介して原典を取得する。
+- WWWK は、CFOS発行のopaque handleをstable Brokerへ渡して原典を取得する。
 - 来歴を確定する本文は、Agent の自己申告を信頼せず、WWWK の Adapter が capability
   から取得する。
 - Source の種類は明示的な allowlist と Adapter で段階的に追加し、最初から汎用
   Source プロトコルを作らない。
-- 初期対応は、Google Doc、Notion Page、Confluence Content などの文書単位の
-  Gatekeeper を優先する。
-- capability と接続状態はポータブルデータに含めない。reference-only の Linked Source
-  は、インポート後に再リンクするまで利用不能とする。
-- 有効な `SourceAccess` を確認できない Linked Source とその派生データは、fail-closed
+- 初期対応はNotion Pageだけとする。
+- handle と接続状態はポータブルデータに含めない。reference-only の Linked Source は、
+  インポート後に再リンクするまで利用不能とする。
+- 有効なhandleをCFOS Brokerで確認できない Linked Source とその派生データは、fail-closed
   で利用不能とする。
 
-Workers RPC と現在の CFOS の Gatekeeper binding を用いたローカル PoC で、別 Worker
-への capability 保存、プロセス再起動後の再読、失効後の遮断を確認した。ただし現在の
-`GatekeeperLoopback` は CFOS の内部実装であり、公開版が直接依存してはならない。
-公開可能な実装では、次の安定した契約を CFOS 側に定義する。
-
-### SourceAccess 契約
+### Linked Source handle と Broker
 
 ```ts
-interface SourceAccess {
-  describe(): Promise<SourceAccessDescription>;
-  openReadSession(): Promise<unknown>;
-}
-
-interface SourceAccessDescription {
-  vendorId: string;
-  url: string;
-  title: string;
-  tsType: string;
+interface SourceAccessBroker {
+  describe(handle: string): Promise<LinkedSourceDescription | null>;
+  openReadSession(handle: string): Promise<unknown | null>;
 }
 ```
 
-- WWWK が永続化する接続は `SourceAccess` だけとし、外部原典の binding や一時的な
-  Gatekeeper Session は保存しない。
-- `describe()` は Adapter の選択と来歴の記録に必要な非秘密情報だけを返す。
-- `openReadSession()` は呼び出すたびに新しい一時 Session を返す。
-- CFOS は、外部原典の binding に対する予約操作で `SourceAccess` を発行する。その
-  binding は発行時だけ使用し、WWWK の実行状態には保存しない。
+- Agentは接続済みNotion bindingの`$cfosLinkedSourceHandle()`からhandleを取得し、
+  `ingest()`の`sourceHandle`として渡す。
+- handleはCFOSが発行する推測不能、失効可能、非ポータブルな値である。WWWKが永続化する
+  実行時接続はこのhandleだけとし、外部原典のbinding、Fetcher、一時Sessionは保存しない。
+- `describe(handle)`はAdapter選択と来歴記録に必要な非秘密情報だけを返す。
+- `openReadSession(handle)`はCFOSでhandleを検証してから、呼び出すたび新しい一時Sessionを
+  返す。失効、不明、障害は`null`でfail-closedにする。
 - Session は observation-only の承認キューで開く。`authorizeObservation()` は CFOS の
   監査へ記録し、`submitAction()` と `bindHook()` は常に拒否する。
 - Source 参照は、元の Agent セッションではなく `linked-source` として監査する。
 - WWWK の Adapter は allowlist された既存の読取メソッドだけを呼び出す。共通の
   `readSource()` は定義しない。
-
-予約操作の名称と Adapter の初期対応範囲は未決定とする。
 
 ## 共有 Gadget の observer 検証
 
@@ -278,7 +264,7 @@ WWWK Gatekeeper の Durable Object 再起動後の再利用を確認した。こ
 ユーザーごとに 1 つの SQLite-backed `WwwkLibrary` Durable Object を割り当てる。
 
 - SQL は、Source、Evidence、Wiki と生成依存リンクを保存する。
-- 同じ Durable Object の embedded KV は、`SourceAccess` などの実行時 capability を
+- 同じ Durable Object の embedded KV は、Linked Sourceのopaque handleなどの実行時状態を
   保存する。外部の Workers KV は使用しない。
 - 検索と逆引きのインデックスは、保存データから再生成できる実行データとする。
 - D1、R2、Vectorize は初期依存にせず、実測した必要性が出た場合だけ追加を検討する。
@@ -450,15 +436,9 @@ transaction 内で実行しない。検証または保存に失敗した場合�
 ### エクスポート境界
 
 - Owned Source とその派生データは、self-contained bundle としてエクスポートできる。
-- Linked Source の本文を含むエクスポートは、有効な `SourceAccess` と出力許可を
-  確認し、利用者の明示的な操作として認可、監査する。
-- 全文を出力する Linked Source は、外部由来の来歴を保持した独立した Owned Source
-  snapshot としてインポートする。以後、そのコピーは外部原典の権限失効に連動しない。
-- 全文出力を許可できない Linked Source と、その内容を含み得る派生データは、
-  self-contained export の対象にしない。参照先、revision、content hash、生成依存を
-  reference-only として持ち運べるようにする。
-- 権限失効を検知した後は、新しい全文エクスポートを拒否する。失効前に正当に
-  エクスポートされた外部コピーの保存、削除、再配布は WWWK の管理対象外とする。
+- Phase 3では、Linked Sourceとその派生データを含むself-contained exportを拒否する。
+- Linked Sourceの全文出力とreference-only bundleは、出力許可を含むCFOS契約を確定して
+  から扱う。
 - 自動または定期エクスポートは初期スコープに含めない。
 
 ### OKF との対応
@@ -588,8 +568,7 @@ Bundle v1 の厳密な YAML スキーマは「ポータブルデータ」に定�
 - インストールスクリプト、アップグレード、アンインストールの詳細
 - 検索件数の上限、高度な検索方式、UI、LLM、バックグラウンド処理
 - Source 更新を検知する時期と方法
-- `SourceAccess` を発行する CFOS 予約操作の名称と Adapter の初期対応範囲
-- Context Library から `SourceAccess` を発行する契約と専用 Adapter
+- Context Library と連携する専用 Adapter
 - Linked Source の全文出力を許可する具体的な契約と reference-only bundle の詳細
 - Broker の発行、失効、account 選択、Gatekeeper への受け渡し契約
 - `sourceAccessId` の発行と信頼済み登録の具体的な実装

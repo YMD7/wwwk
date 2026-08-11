@@ -20,6 +20,7 @@ import type {
   WwwkDocumentType,
   WwwkIngestInput,
   WwwkInputRef,
+  WwwkLinkedSourceInput,
   WwwkSearchResult,
 } from "./types.js";
 import TYPES_CODE from "./types.txt";
@@ -125,6 +126,43 @@ type IngestBatch = {
   source: StoredDocument;
   evidence: StoredDocument;
   wiki: StoredDocument;
+  linked?: LinkedSourceIngest;
+};
+
+type LinkedSourceRecord = {
+  sourceId: string;
+  vendor: string;
+  resource: string;
+  revision: string;
+  tsType: string;
+};
+
+type LinkedSourceIngest = LinkedSourceRecord & {
+  sourceHandle: string;
+};
+
+type LinkedSourceDescription = {
+  vendorId: string;
+  url: string;
+  title: string;
+  tsType: string;
+};
+
+type SourceAccessBroker = {
+  describe(handle: string): Promise<LinkedSourceDescription | null>;
+  openReadSession(handle: string): Promise<unknown | null>;
+};
+
+type NotionPageMetadata = {
+  title: string;
+  url: string;
+  lastEditedAt: Date | string;
+};
+
+type NotionPageSession = {
+  getMetadata(): Promise<NotionPageMetadata>;
+  getContent(): Promise<string>;
+  [Symbol.dispose]?: () => void;
 };
 
 type IngestIds = {
@@ -163,6 +201,86 @@ function actionKey(actionId: number): string {
   return `action:${actionId}`;
 }
 
+function linkedSourceHandleKey(sourceId: string): string {
+  return `linkedSourceHandle:${sourceId}`;
+}
+
+function validateLinkedSourceDescription(
+  description: LinkedSourceDescription,
+): void {
+  if (description.vendorId !== "notion" || description.tsType !== "NotionPage") {
+    throw new Error("WWWK supports only linked Notion pages.");
+  }
+  if (!description.url || !description.title) {
+    throw new Error("Linked source description is incomplete.");
+  }
+}
+
+function getNotionPageSession(value: unknown): NotionPageSession {
+  if (!value || (typeof value !== "object" && typeof value !== "function")) {
+    throw new Error("Linked source did not open a Notion page session.");
+  }
+  return value as NotionPageSession;
+}
+
+function toRevision(value: Date | string): string {
+  try {
+    return value instanceof Date
+      ? value.toISOString()
+      : new Date(value).toISOString();
+  } catch {
+    throw new Error("Linked source revision is invalid.");
+  }
+}
+
+async function readLinkedNotionSourceWithBroker(
+  input: WwwkLinkedSourceInput,
+  broker: SourceAccessBroker,
+): Promise<{
+  title: string;
+  content: string;
+  metadataJson: string;
+  linked: Omit<LinkedSourceIngest, "sourceId">;
+}> {
+  if (!input.sourceHandle) throw new Error("Linked source handle is required.");
+  const description = await broker.describe(input.sourceHandle);
+  if (!description) throw new Error("Linked source handle is unavailable.");
+  validateLinkedSourceDescription(description);
+  const opened = await broker.openReadSession(input.sourceHandle);
+  const session = getNotionPageSession(opened);
+  try {
+    const [metadata, content] = await Promise.all([
+      session.getMetadata(),
+      session.getContent(),
+    ]);
+    if (!metadata.title.trim() || !metadata.url || !content.trim()) {
+      throw new Error("Linked Notion page is incomplete.");
+    }
+    if (metadata.url !== description.url) {
+      throw new Error("Linked source metadata does not match its description.");
+    }
+    const revision = toRevision(metadata.lastEditedAt);
+    return {
+      title: metadata.title,
+      content,
+      metadataJson: JSON.stringify({
+        vendor: description.vendorId,
+        resource: metadata.url,
+        revision,
+      }),
+      linked: {
+        vendor: description.vendorId,
+        resource: description.url,
+        revision,
+        tsType: description.tsType,
+        sourceHandle: input.sourceHandle,
+      },
+    };
+  } finally {
+    session[Symbol.dispose]?.();
+  }
+}
+
 function idsFromBatch(batch: IngestBatch): IngestIds {
   return {
     sourceId: batch.source.id,
@@ -197,6 +315,12 @@ function validateDocumentType(value: WwwkDocumentType): void {
 function validateDraft(name: string, draft: WwwkDocumentDraft): void {
   if (!draft.title.trim()) throw new Error(`${name}.title must not be empty.`);
   if (!draft.content.trim()) throw new Error(`${name}.content must not be empty.`);
+}
+
+function isLinkedSource(
+  source: WwwkIngestInput["source"],
+): source is WwwkLinkedSourceInput {
+  return "kind" in source && source.kind === "linked";
 }
 
 function makeSnippet(content: string, query: string): string {
@@ -255,6 +379,7 @@ export class WwwkSessionImpl extends RpcTarget {
   constructor(
     private library: DurableObjectStub<WwwkLibrary>,
     private approvalQueue: NativeRpcStub<ApprovalQueue>,
+    private broker: SourceAccessBroker,
     private submitPendingAction: (batch: IngestBatch) => number,
     private dropPendingAction: (actionId: number) => void,
   ) {
@@ -301,14 +426,23 @@ export class WwwkSessionImpl extends RpcTarget {
   }
 
   async ingest(input: WwwkIngestInput): Promise<void> {
-    validateDraft("source", input.source);
     validateDraft("evidence", input.evidence);
     validateDraft("wiki", input.wiki);
     await this.library.assertLive();
 
+    let linkedSource: Awaited<ReturnType<typeof readLinkedNotionSourceWithBroker>> | undefined;
+    let sourceDraft: WwwkDocumentDraft;
+    if (isLinkedSource(input.source)) {
+      linkedSource = await readLinkedNotionSourceWithBroker(input.source, this.broker);
+      sourceDraft = linkedSource;
+    } else {
+      validateDraft("source", input.source);
+      sourceDraft = input.source;
+    }
+
     const createdAt = Date.now();
     const [sourceHash, evidenceHash, wikiHash] = await Promise.all([
-      sha256Text(input.source.content),
+      sha256Text(sourceDraft.content),
       sha256Text(input.evidence.content),
       sha256Text(input.wiki.content),
     ]);
@@ -316,10 +450,10 @@ export class WwwkSessionImpl extends RpcTarget {
       source: {
         id: crypto.randomUUID(),
         type: "source",
-        title: input.source.title,
-        content: input.source.content,
+        title: sourceDraft.title,
+        content: sourceDraft.content,
         contentHash: sourceHash,
-        metadataJson: "{}",
+        metadataJson: linkedSource?.metadataJson ?? "{}",
         isAvailable: 1,
         createdAt,
       },
@@ -344,6 +478,12 @@ export class WwwkSessionImpl extends RpcTarget {
         createdAt,
       },
     };
+    if (linkedSource) {
+      batch.linked = {
+        ...linkedSource.linked,
+        sourceId: batch.source.id,
+      };
+    }
 
     const actionId = this.submitPendingAction(batch);
     try {
@@ -351,8 +491,11 @@ export class WwwkSessionImpl extends RpcTarget {
         title: "Save text to WWWK",
         description:
           `Create three private documents in WWWK:\n\n` +
-          `- Source: **${escapeMarkdownInline(input.source.title)}** ` +
-          `(${Array.from(input.source.content).length} characters)\n` +
+          `- Source: **${escapeMarkdownInline(sourceDraft.title)}** ` +
+          (linkedSource
+            ? `(${linkedSource.linked.resource}, `
+            : "(") +
+          `${Array.from(sourceDraft.content).length} characters)\n` +
           `- Evidence: **${escapeMarkdownInline(input.evidence.title)}**\n` +
           `- Wiki: **${escapeMarkdownInline(input.wiki.title)}**\n\n` +
           "The documents are visible only to the owner and can be reverted together.",
@@ -384,49 +527,65 @@ export class WwwkLibrary extends DurableObject<Cloudflare.Env> {
       const version = this.ctx.storage.sql.exec<{ version: number }>(
         "SELECT COALESCE(MAX(version), 0) AS version FROM _schema_migrations",
       ).one().version;
-      if (version >= 1) return;
-      this.ctx.storage.sql.exec(`
-        CREATE TABLE documents (
-          id TEXT PRIMARY KEY,
-          type TEXT NOT NULL
-            CHECK (type IN ('source', 'evidence', 'wiki')),
-          title TEXT NOT NULL CHECK (length(title) > 0),
-          content TEXT NOT NULL CHECK (length(content) > 0),
-          content_hash TEXT NOT NULL,
-          metadata_json TEXT NOT NULL DEFAULT '{}'
-            CHECK (json_valid(metadata_json)),
-          is_available INTEGER NOT NULL DEFAULT 1
-            CHECK (is_available IN (0, 1)),
-          created_at INTEGER NOT NULL
+      if (version < 1) {
+        this.ctx.storage.sql.exec(`
+          CREATE TABLE documents (
+            id TEXT PRIMARY KEY,
+            type TEXT NOT NULL
+              CHECK (type IN ('source', 'evidence', 'wiki')),
+            title TEXT NOT NULL CHECK (length(title) > 0),
+            content TEXT NOT NULL CHECK (length(content) > 0),
+            content_hash TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+              CHECK (json_valid(metadata_json)),
+            is_available INTEGER NOT NULL DEFAULT 1
+              CHECK (is_available IN (0, 1)),
+            created_at INTEGER NOT NULL
+          );
+          CREATE TABLE document_inputs (
+            document_id TEXT NOT NULL
+              REFERENCES documents(id) ON DELETE CASCADE,
+            input_id TEXT NOT NULL
+              REFERENCES documents(id) ON DELETE RESTRICT,
+            PRIMARY KEY (document_id, input_id),
+            CHECK (document_id <> input_id)
+          );
+          CREATE INDEX documents_by_scope
+            ON documents(type, is_available, created_at DESC);
+          CREATE INDEX document_inputs_by_input
+            ON document_inputs(input_id, document_id);
+        `);
+        this.ctx.storage.sql.exec(
+          "INSERT INTO _schema_migrations (version, applied_at) VALUES (1, ?)",
+          Date.now(),
         );
-        CREATE TABLE document_inputs (
-          document_id TEXT NOT NULL
-            REFERENCES documents(id) ON DELETE CASCADE,
-          input_id TEXT NOT NULL
-            REFERENCES documents(id) ON DELETE RESTRICT,
-          PRIMARY KEY (document_id, input_id),
-          CHECK (document_id <> input_id)
+      }
+      if (version < 2) {
+        this.ctx.storage.sql.exec(`
+          CREATE TABLE linked_sources (
+            source_id TEXT PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
+            vendor TEXT NOT NULL,
+            resource TEXT NOT NULL,
+            revision TEXT NOT NULL,
+            ts_type TEXT NOT NULL
+          );
+        `);
+        this.ctx.storage.sql.exec(
+          "INSERT INTO _schema_migrations (version, applied_at) VALUES (2, ?)",
+          Date.now(),
         );
-        CREATE INDEX documents_by_scope
-          ON documents(type, is_available, created_at DESC);
-        CREATE INDEX document_inputs_by_input
-          ON document_inputs(input_id, document_id);
-      `);
-      this.ctx.storage.sql.exec(
-        "INSERT INTO _schema_migrations (version, applied_at) VALUES (1, ?)",
-        Date.now(),
-      );
+      }
     });
   }
 
-  search(
+  async search(
     query: string,
     type: WwwkDocumentType,
     limit: number,
-  ): WwwkSearchResult[] {
+  ): Promise<WwwkSearchResult[]> {
     this.assertLive();
     validateDocumentType(type);
-    return this.ctx.storage.sql.exec<{
+    const candidates = this.ctx.storage.sql.exec<{
       id: string;
       type: WwwkDocumentType;
       title: string;
@@ -443,16 +602,23 @@ export class WwwkLibrary extends DurableObject<Cloudflare.Env> {
       query,
       query,
       limit,
-    ).toArray().map((row) => ({
+    ).toArray();
+    const results: WwwkSearchResult[] = [];
+    for (const row of candidates) {
+      if (!await this.reauthorizeDocument(row.id)) continue;
+      results.push({
       id: row.id,
       type: row.type,
       title: row.title,
       snippet: makeSnippet(row.content, query),
-    }));
+      });
+    }
+    return results;
   }
 
-  read(id: string): WwwkDocument | null {
+  async read(id: string): Promise<WwwkDocument | null> {
     this.assertLive();
+    if (!await this.reauthorizeDocument(id)) return null;
     const rows = this.ctx.storage.sql.exec<{
       id: string;
       type: WwwkDocumentType;
@@ -517,6 +683,25 @@ export class WwwkLibrary extends DurableObject<Cloudflare.Env> {
           batch.wiki.id,
           batch.evidence.id,
         );
+        if (batch.linked) {
+          if (batch.linked.sourceId !== batch.source.id) {
+            throw new Error("WWWK linked source does not match its Source document.");
+          }
+          this.ctx.storage.sql.exec(
+            `INSERT INTO linked_sources (
+               source_id, vendor, resource, revision, ts_type
+             ) VALUES (?, ?, ?, ?, ?)`,
+            batch.linked.sourceId,
+            batch.linked.vendor,
+            batch.linked.resource,
+            batch.linked.revision,
+            batch.linked.tsType,
+          );
+          this.ctx.storage.kv.put(
+            linkedSourceHandleKey(batch.linked.sourceId),
+            batch.linked.sourceHandle,
+          );
+        }
         return;
       }
       if (!this.ingestMatches(batch, existing, links)) {
@@ -558,6 +743,13 @@ export class WwwkLibrary extends DurableObject<Cloudflare.Env> {
         "DELETE FROM document_inputs WHERE document_id IN (?, ?, ?)",
         ...documentIds,
       );
+      const linkedSourceIds = this.ctx.storage.sql.exec<{ sourceId: string }>(
+        "SELECT source_id AS sourceId FROM linked_sources WHERE source_id IN (?, ?, ?)",
+        ...documentIds,
+      ).toArray();
+      for (const linked of linkedSourceIds) {
+        this.ctx.storage.kv.delete(linkedSourceHandleKey(linked.sourceId));
+      }
       this.ctx.storage.sql.exec(
         "DELETE FROM documents WHERE id IN (?, ?, ?)",
         ...documentIds,
@@ -567,6 +759,12 @@ export class WwwkLibrary extends DurableObject<Cloudflare.Env> {
 
   async exportBundle(): Promise<WwwkPortableBundle> {
     this.assertLive();
+    const linkedCount = this.ctx.storage.sql.exec<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM linked_sources",
+    ).one().count;
+    if (linkedCount !== 0) {
+      throw new Error("WWWK cannot export Linked Sources.");
+    }
     const documents = this.ctx.storage.sql.exec<StoredDocument>(
       `SELECT id, type, title, content,
          content_hash AS contentHash,
@@ -600,7 +798,10 @@ export class WwwkLibrary extends DurableObject<Cloudflare.Env> {
       const inputCount = this.ctx.storage.sql.exec<{ count: number }>(
         "SELECT COUNT(*) AS count FROM document_inputs",
       ).one().count;
-      if (documentCount !== 0 || inputCount !== 0) {
+      const linkedCount = this.ctx.storage.sql.exec<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM linked_sources",
+      ).one().count;
+      if (documentCount !== 0 || inputCount !== 0 || linkedCount !== 0) {
         throw new Error("WWWK bundle import requires an empty Library.");
       }
       for (const document of parsed.documents) {
@@ -624,9 +825,90 @@ export class WwwkLibrary extends DurableObject<Cloudflare.Env> {
 
   revoke(): void {
     this.ctx.storage.transactionSync(() => {
+      const linkedSourceIds = this.ctx.storage.sql.exec<{ sourceId: string }>(
+        "SELECT source_id AS sourceId FROM linked_sources",
+      ).toArray();
+      for (const linked of linkedSourceIds) {
+        this.ctx.storage.kv.delete(linkedSourceHandleKey(linked.sourceId));
+      }
       this.ctx.storage.sql.exec("DELETE FROM document_inputs");
       this.ctx.storage.sql.exec("DELETE FROM documents");
       this.ctx.storage.kv.put(LIBRARY_REVOKED_KEY, true);
+    });
+  }
+
+  private async reauthorizeDocument(documentId: string): Promise<boolean> {
+    const linkedSources = this.ctx.storage.sql.exec<LinkedSourceRecord>(
+      `WITH RECURSIVE ancestors(id) AS (
+         SELECT ?
+         UNION
+         SELECT links.input_id
+         FROM document_inputs AS links
+         JOIN ancestors ON links.document_id = ancestors.id
+       )
+       SELECT source_id AS sourceId, vendor, resource, revision,
+              ts_type AS tsType
+       FROM linked_sources
+       WHERE source_id IN (SELECT id FROM ancestors)
+       ORDER BY source_id`,
+      documentId,
+    ).toArray();
+    for (const linked of linkedSources) {
+      if (!await this.reauthorizeLinkedSource(linked)) return false;
+    }
+    return true;
+  }
+
+  private async reauthorizeLinkedSource(linked: LinkedSourceRecord): Promise<boolean> {
+    try {
+      const sourceHandle = this.ctx.storage.kv.get<string>(
+        linkedSourceHandleKey(linked.sourceId),
+      );
+      if (!sourceHandle) throw new Error("Linked source handle is missing.");
+      const description = await this.env.CFOS_SOURCE_ACCESS_BROKER.describe(sourceHandle);
+      if (!description) throw new Error("Linked source handle is unavailable.");
+      validateLinkedSourceDescription(description);
+      if (
+        description.vendorId !== linked.vendor ||
+        description.url !== linked.resource ||
+        description.tsType !== linked.tsType
+      ) {
+        throw new Error("Linked source description has changed.");
+      }
+      const session = getNotionPageSession(
+        await this.env.CFOS_SOURCE_ACCESS_BROKER.openReadSession(sourceHandle),
+      );
+      try {
+        const metadata = await session.getMetadata();
+        if (metadata.url !== linked.resource) {
+          throw new Error("Linked source metadata has changed.");
+        }
+      } finally {
+        session[Symbol.dispose]?.();
+      }
+      return true;
+    } catch {
+      this.invalidateLinkedSource(linked.sourceId);
+      return false;
+    }
+  }
+
+  private invalidateLinkedSource(sourceId: string): void {
+    this.ctx.storage.transactionSync(() => {
+      this.ctx.storage.sql.exec(
+        `WITH RECURSIVE affected(id) AS (
+           SELECT ?
+           UNION
+           SELECT links.document_id
+           FROM document_inputs AS links
+           JOIN affected ON links.input_id = affected.id
+         )
+         UPDATE documents
+         SET is_available = 0
+         WHERE id IN (SELECT id FROM affected)`,
+        sourceId,
+      );
+      this.ctx.storage.kv.delete(linkedSourceHandleKey(sourceId));
     });
   }
 
@@ -729,6 +1011,7 @@ export class WwwkGatekeeper
     return new WwwkSessionImpl(
       this.library(),
       approvalQueue.dup(),
+      this.env.CFOS_SOURCE_ACCESS_BROKER,
       (batch) => this.submitPendingAction(batch),
       (actionId) => this.dropPendingAction(actionId),
     );
