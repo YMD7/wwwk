@@ -18,9 +18,16 @@ export せず、外部 binding と一時 Session も保存しない。
 
 利用者へ特定の CFOS fork を要求せず、対応する公式 CFOS と
 `cloudflare-os-starter`へ、version 固定の installer が必要な差分を一時的に適用する方針を
-採用する。Phase 5では固定revision向けのpatch、互換lockfile、binding生成PoCを追跡している。
-利用者向けinstallerとCloudflare上での本番導入は未実装である。bundleを運ぶUI、CLI、archive、
-Linked Sourceのexportもまだ対象外とする。
+採用する。ローカルの対応 CFOS clone は、次の入口で起動できる。
+
+```sh
+pnpm run install:local -- --cfos "$CFOS_ROOT"
+```
+
+installer は checkout 外の state と専用 integration worktree を使い、元の clone を変更しない。
+停止後の再起動、state場所の変更、非破壊 disconnect は
+[Installation](docs/INSTALLATION.md) を参照する。Cloudflare 上での本番導入、bundleを運ぶUI、
+CLI、archive、Linked Sourceのexportはまだ対象外とする。
 
 導入契約と現在の実装状況は [Installation](docs/INSTALLATION.md) を参照する。
 
