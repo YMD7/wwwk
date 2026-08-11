@@ -67,11 +67,15 @@ bundle として持ち運べる。
 **ゴール:** 共同利用者が全 Linked Source を現在参照できる場合だけ、WWWK 由来の
 Gadget observation を利用できる。
 
+**現在地:** 実装済み（review待ち）。
+
 完了条件:
 
 - 生成依存を Source revision まで決定論的に辿る。
 - CFOS の Broker による全件検証が成功した場合だけ observation を許可する。
 - Owned Source、拒否、障害、不明な依存を fail-closed で扱う。
+- 観測済みの生成依存だけをobserver要件にし、同一Overseer/workspace外のSourceは
+  fail-closedで拒否する。
 
 対象外: Wiki の直接共有、Owned Source の共有ポリシー。
 

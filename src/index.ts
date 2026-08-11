@@ -53,6 +53,7 @@ type ResourceDescription = {
   suggestedBindingName: string;
   tsType: string;
   hasSlashCommands?: true;
+  hasObservedSourceAccessIds?: true;
 };
 type ResourceConfiguratorFrame = {
   iframeHtml: string;
@@ -77,6 +78,15 @@ interface ObservationAuthorizer extends NativeRpcTarget {
 
 interface ApprovalQueue extends ObservationAuthorizer {
   submitAction(actionId: number, description: ActionDescription): Promise<void>;
+
+  /**
+   * CFOS が同一 workspace の Linked Source を observer ごとに検証する。
+   * sourceAccessId は監査descriptionへ含めず、この RPC 引数だけで渡す。
+   */
+  authorizeSourceObservation(
+    description: ObservationDescription,
+    sourceAccessIds: string[],
+  ): Promise<void>;
 }
 
 const AGENT_CATALOG_MAX_ENTRIES = 25;
@@ -139,6 +149,7 @@ type LinkedSourceRecord = {
 
 type LinkedSourceIngest = LinkedSourceRecord & {
   sourceHandle: string;
+  sourceAccessId: string;
 };
 
 type LinkedSourceDescription = {
@@ -151,6 +162,22 @@ type LinkedSourceDescription = {
 type SourceAccessBroker = {
   describe(handle: string): Promise<LinkedSourceDescription | null>;
   openReadSession(handle: string): Promise<unknown | null>;
+  registerSourceAccess(handle: string): Promise<string | null>;
+};
+
+type ObservationSources = {
+  sourceAccessIds: string[];
+  requiresPrivateObservation: boolean;
+};
+
+type DocumentClosure = {
+  documents: Array<{
+    id: string;
+    type: WwwkDocumentType;
+    isAvailable: number;
+  }>;
+  inputs: StoredInput[];
+  linkedSourceIds: Set<string>;
 };
 
 type NotionPageMetadata = {
@@ -203,6 +230,14 @@ function actionKey(actionId: number): string {
 
 function linkedSourceHandleKey(sourceId: string): string {
   return `linkedSourceHandle:${sourceId}`;
+}
+
+function linkedSourceAccessIdKey(sourceId: string): string {
+  return `linkedSourceAccessId:${sourceId}`;
+}
+
+function observedSourceAccessIdKey(sourceAccessId: string): string {
+  return `observedSourceAccessId:${sourceAccessId}`;
 }
 
 function validateLinkedSourceDescription(
@@ -260,6 +295,8 @@ async function readLinkedNotionSourceWithBroker(
       throw new Error("Linked source metadata does not match its description.");
     }
     const revision = toRevision(metadata.lastEditedAt);
+    const sourceAccessId = await broker.registerSourceAccess(input.sourceHandle);
+    if (!sourceAccessId) throw new Error("Linked source access is unavailable.");
     return {
       title: metadata.title,
       content,
@@ -274,6 +311,7 @@ async function readLinkedNotionSourceWithBroker(
         revision,
         tsType: description.tsType,
         sourceHandle: input.sourceHandle,
+        sourceAccessId,
       },
     };
   } finally {
@@ -382,6 +420,7 @@ export class WwwkSessionImpl extends RpcTarget {
     private broker: SourceAccessBroker,
     private submitPendingAction: (batch: IngestBatch) => number,
     private dropPendingAction: (actionId: number) => void,
+    private recordObservedSourceAccessIds: (sourceAccessIds: string[]) => void,
   ) {
     super();
   }
@@ -403,11 +442,10 @@ export class WwwkSessionImpl extends RpcTarget {
       normalizeLimit(options?.limit),
     );
     if (results.length > 0) {
-      await this.approvalQueue.authorizeObservation({
+      await this.authorizeDocuments({
         title: "WWWK search",
         description: `Returned ${results.length} personal Wiki result(s).`,
-        prohibitAllSharing: true,
-      });
+      }, results.map((result) => result.id));
     }
     return results;
   }
@@ -416,13 +454,35 @@ export class WwwkSessionImpl extends RpcTarget {
     if (!id) return null;
     const document = await this.library.read(id);
     if (document) {
-      await this.approvalQueue.authorizeObservation({
+      await this.authorizeDocuments({
         title: "WWWK read",
         description: "Read one document from the personal Wiki.",
-        prohibitAllSharing: true,
-      });
+      }, [document.id]);
     }
     return document;
+  }
+
+  private async authorizeDocuments(
+    description: ObservationDescription,
+    documentIds: string[],
+  ): Promise<void> {
+    const sources = await this.library.getObservationSources(documentIds);
+    if (sources.requiresPrivateObservation) {
+      await this.approvalQueue.authorizeObservation({
+        ...description,
+        prohibitAllSharing: true,
+      });
+      return;
+    }
+    try {
+      await this.approvalQueue.authorizeSourceObservation(
+        description,
+        sources.sourceAccessIds,
+      );
+    } finally {
+      // 返却前に記録する。検証失敗時の過剰記録は安全側に倒すため許容する。
+      this.recordObservedSourceAccessIds(sources.sourceAccessIds);
+    }
   }
 
   async ingest(input: WwwkIngestInput): Promise<void> {
@@ -652,6 +712,46 @@ export class WwwkLibrary extends DurableObject<Cloudflare.Env> {
     return { ...row, inputs };
   }
 
+  /**
+   * 返却候補の生成依存を辿り、共有に必要な Linked Source の集合を返す。
+   * Owned Source は owner-only observation を維持するため明示的に区別する。
+   */
+  async getObservationSources(documentIds: string[]): Promise<ObservationSources> {
+    this.assertLive();
+    const ids = [...new Set(documentIds)].sort();
+    if (ids.length === 0) {
+      throw new Error("WWWK observation requires at least one document.");
+    }
+    for (const id of ids) {
+      if (!await this.reauthorizeDocument(id)) {
+        throw new Error("WWWK observation source is unavailable.");
+      }
+    }
+
+    const closure = this.selectDocumentClosure(ids);
+    const linkedSourceIds = this.validateDocumentClosure(ids, closure);
+    const sourceAccessIds = new Set<string>();
+    let requiresPrivateObservation = false;
+    for (const sourceId of linkedSourceIds) {
+      const linked = closure.linkedSourceIds.has(sourceId);
+      if (!linked) {
+        requiresPrivateObservation = true;
+        continue;
+      }
+      const sourceAccessId = this.ctx.storage.kv.get<string>(
+        linkedSourceAccessIdKey(sourceId),
+      );
+      if (!sourceAccessId) {
+        throw new Error("Linked source access ID is missing.");
+      }
+      sourceAccessIds.add(sourceAccessId);
+    }
+    return {
+      sourceAccessIds: [...sourceAccessIds].sort(),
+      requiresPrivateObservation,
+    };
+  }
+
   applyIngest(batch: IngestBatch): void {
     const documents = [batch.source, batch.evidence, batch.wiki];
     if (new Set(documents.map((document) => document.id)).size !== 3) {
@@ -701,6 +801,10 @@ export class WwwkLibrary extends DurableObject<Cloudflare.Env> {
             linkedSourceHandleKey(batch.linked.sourceId),
             batch.linked.sourceHandle,
           );
+          this.ctx.storage.kv.put(
+            linkedSourceAccessIdKey(batch.linked.sourceId),
+            batch.linked.sourceAccessId,
+          );
         }
         return;
       }
@@ -749,6 +853,7 @@ export class WwwkLibrary extends DurableObject<Cloudflare.Env> {
       ).toArray();
       for (const linked of linkedSourceIds) {
         this.ctx.storage.kv.delete(linkedSourceHandleKey(linked.sourceId));
+        this.ctx.storage.kv.delete(linkedSourceAccessIdKey(linked.sourceId));
       }
       this.ctx.storage.sql.exec(
         "DELETE FROM documents WHERE id IN (?, ?, ?)",
@@ -830,11 +935,102 @@ export class WwwkLibrary extends DurableObject<Cloudflare.Env> {
       ).toArray();
       for (const linked of linkedSourceIds) {
         this.ctx.storage.kv.delete(linkedSourceHandleKey(linked.sourceId));
+        this.ctx.storage.kv.delete(linkedSourceAccessIdKey(linked.sourceId));
       }
       this.ctx.storage.sql.exec("DELETE FROM document_inputs");
       this.ctx.storage.sql.exec("DELETE FROM documents");
       this.ctx.storage.kv.put(LIBRARY_REVOKED_KEY, true);
     });
+  }
+
+  private selectDocumentClosure(documentIds: string[]): DocumentClosure {
+    const placeholders = documentIds.map(() => "?").join(", ");
+    const documents = this.ctx.storage.sql.exec<{
+      id: string;
+      type: WwwkDocumentType;
+      isAvailable: number;
+    }>(
+      `WITH RECURSIVE ancestors(id) AS (
+         SELECT id FROM documents WHERE id IN (${placeholders})
+         UNION
+         SELECT links.input_id
+         FROM document_inputs AS links
+         JOIN ancestors ON links.document_id = ancestors.id
+       )
+       SELECT id, type, is_available AS isAvailable
+       FROM documents
+       WHERE id IN (SELECT id FROM ancestors)
+       ORDER BY id`,
+      ...documentIds,
+    ).toArray();
+    if (documents.length === 0) {
+      throw new Error("WWWK observation document is unavailable.");
+    }
+    const closureIds = documents.map((document) => document.id);
+    const closurePlaceholders = closureIds.map(() => "?").join(", ");
+    const inputs = this.ctx.storage.sql.exec<StoredInput>(
+      `SELECT document_id AS documentId, input_id AS inputId
+       FROM document_inputs
+       WHERE document_id IN (${closurePlaceholders})
+       ORDER BY document_id, input_id`,
+      ...closureIds,
+    ).toArray();
+    const linkedSourceIds = new Set(this.ctx.storage.sql.exec<{ sourceId: string }>(
+      `SELECT source_id AS sourceId
+       FROM linked_sources
+       WHERE source_id IN (${closurePlaceholders})
+       ORDER BY source_id`,
+      ...closureIds,
+    ).toArray().map((linked) => linked.sourceId));
+    return { documents, inputs, linkedSourceIds };
+  }
+
+  private validateDocumentClosure(
+    requestedIds: string[],
+    closure: DocumentClosure,
+  ): string[] {
+    const documents = new Map(closure.documents.map((document) => [document.id, document]));
+    if (requestedIds.some((id) => !documents.has(id))) {
+      throw new Error("WWWK observation document is unavailable.");
+    }
+    if (closure.documents.some((document) => document.isAvailable !== 1)) {
+      throw new Error("WWWK observation contains an unavailable document.");
+    }
+    const inputsByDocument = new Map<string, string[]>();
+    for (const input of closure.inputs) {
+      if (!documents.has(input.documentId) || !documents.has(input.inputId)) {
+        throw new Error("WWWK observation has a dangling dependency.");
+      }
+      const inputs = inputsByDocument.get(input.documentId) ?? [];
+      inputs.push(input.inputId);
+      inputsByDocument.set(input.documentId, inputs);
+    }
+    for (const sourceId of closure.linkedSourceIds) {
+      if (documents.get(sourceId)?.type !== "source") {
+        throw new Error("WWWK observation has an invalid Linked Source dependency.");
+      }
+    }
+
+    const sourceIds: string[] = [];
+    for (const document of closure.documents) {
+      const inputs = inputsByDocument.get(document.id) ?? [];
+      if (document.type === "source") {
+        if (inputs.length !== 0) {
+          throw new Error("WWWK observation has a cyclic or invalid Source dependency.");
+        }
+        sourceIds.push(document.id);
+        continue;
+      }
+      if (inputs.length !== 1) {
+        throw new Error("WWWK observation has an incomplete generated dependency.");
+      }
+      const input = documents.get(inputs[0]);
+      const expectedType = document.type === "evidence" ? "source" : "evidence";
+      if (input?.type !== expectedType) {
+        throw new Error("WWWK observation has an invalid generated dependency.");
+      }
+    }
+    return sourceIds;
   }
 
   private async reauthorizeDocument(documentId: string): Promise<boolean> {
@@ -909,6 +1105,7 @@ export class WwwkLibrary extends DurableObject<Cloudflare.Env> {
         sourceId,
       );
       this.ctx.storage.kv.delete(linkedSourceHandleKey(sourceId));
+      this.ctx.storage.kv.delete(linkedSourceAccessIdKey(sourceId));
     });
   }
 
@@ -993,6 +1190,7 @@ export class WwwkGatekeeper
       suggestedBindingName: "WWWK",
       tsType: "WwwkSession",
       hasSlashCommands: true,
+      hasObservedSourceAccessIds: true,
     };
   }
 
@@ -1014,6 +1212,7 @@ export class WwwkGatekeeper
       this.env.CFOS_SOURCE_ACCESS_BROKER,
       (batch) => this.submitPendingAction(batch),
       (actionId) => this.dropPendingAction(actionId),
+      (sourceAccessIds) => this.recordObservedSourceAccessIds(sourceAccessIds),
     );
   }
 
@@ -1045,10 +1244,27 @@ export class WwwkGatekeeper
     _id: string,
     _user: Fetcher<WwwkVerifier>,
   ): Promise<void> {
-    throw new Error("WWWK is owner-only and cannot be shared with observers.");
+    // Linked Source の検証は CFOS が vendor ごとの Gatekeeper へ委ねる。
+    return Promise.resolve();
   }
 
   async removeObserver(_id: string): Promise<void> {}
+
+  async listObservedSourceAccessIds(): Promise<string[]> {
+    await this.library().assertLive();
+    return [...this.ctx.storage.kv.list<string>({ prefix: "observedSourceAccessId:" })]
+      .map(([key]) => key.slice("observedSourceAccessId:".length))
+      .sort();
+  }
+
+  private recordObservedSourceAccessIds(sourceAccessIds: string[]): void {
+    this.ctx.storage.transactionSync(() => {
+      for (const sourceAccessId of sourceAccessIds) {
+        if (!sourceAccessId) throw new Error("Linked source access ID is invalid.");
+        this.ctx.storage.kv.put(observedSourceAccessIdKey(sourceAccessId), true);
+      }
+    });
+  }
 
   private submitPendingAction(batch: IngestBatch): number {
     return this.ctx.storage.transactionSync(() => {

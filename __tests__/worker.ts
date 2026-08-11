@@ -68,6 +68,17 @@ class TestApprovalQueueTarget extends RpcTarget {
     submittedAction = { actionId, description };
   }
 
+  async authorizeSourceObservation(
+    _description: object,
+    sourceAccessIds: string[],
+  ): Promise<void> {
+    if (!sourceObservationAllowed || sourceAccessIds.some(
+      (sourceAccessId) => !isKnownSourceAccessId(sourceAccessId),
+    )) {
+      throw new Error("The test observer cannot access every Linked Source.");
+    }
+  }
+
   [Symbol.dispose](): void {}
 }
 
@@ -79,18 +90,38 @@ export class TestApprovalQueue extends WorkerEntrypoint {
 }
 
 let brokerHandle: string | undefined;
-let brokerRevoked = false;
 let brokerSessionCount = 0;
 let brokerVendorId = "notion";
 let brokerTsType = "NotionPage";
+let sourceObservationAllowed = true;
+
+type TestBrokerRegistration = {
+  sourceAccessId: string;
+  revoked: boolean;
+};
+
+let brokerRegistrations = new Map<string, TestBrokerRegistration>();
+
+function brokerRegistration(handle: string): TestBrokerRegistration | undefined {
+  const registration = brokerRegistrations.get(handle);
+  return registration && !registration.revoked ? registration : undefined;
+}
+
+function isKnownSourceAccessId(sourceAccessId: string): boolean {
+  return [...brokerRegistrations.values()].some((registration) =>
+    !registration.revoked && registration.sourceAccessId === sourceAccessId);
+}
 
 class TestBrokerReadSession extends RpcTarget {
-  constructor(private readonly sessionId: number) {
+  constructor(
+    private readonly handle: string,
+    private readonly sessionId: number,
+  ) {
     super();
   }
 
   async getMetadata() {
-    if (brokerRevoked) throw new Error("Source access was revoked.");
+    if (!brokerRegistration(this.handle)) throw new Error("Source access was revoked.");
     return {
       title: "連携テストページ",
       url: "https://www.notion.so/example/linked-page",
@@ -99,7 +130,7 @@ class TestBrokerReadSession extends RpcTarget {
   }
 
   async getContent(): Promise<string> {
-    if (brokerRevoked) throw new Error("Source access was revoked.");
+    if (!brokerRegistration(this.handle)) throw new Error("Source access was revoked.");
     return `fresh-session-${this.sessionId}`;
   }
 
@@ -110,16 +141,20 @@ class TestBrokerReadSession extends RpcTarget {
 export class TestSourceBroker extends WorkerEntrypoint {
   issue(): string {
     brokerHandle = crypto.randomUUID();
-    brokerRevoked = false;
+    brokerRegistrations.set(brokerHandle, {
+      sourceAccessId: `test-source-access-${crypto.randomUUID()}`,
+      revoked: false,
+    });
     return brokerHandle;
   }
 
   revoke(handle: string): void {
-    if (handle === brokerHandle) brokerRevoked = true;
+    const registration = brokerRegistrations.get(handle);
+    if (registration) registration.revoked = true;
   }
 
   async describe(handle: string) {
-    if (handle !== brokerHandle || brokerRevoked) {
+    if (!brokerRegistration(handle)) {
       return null;
     }
     return {
@@ -132,7 +167,11 @@ export class TestSourceBroker extends WorkerEntrypoint {
 
   async openReadSession(handle: string): Promise<RpcStub<TestBrokerReadSession>> {
     if (!await this.describe(handle)) throw new Error("Source handle is unavailable.");
-    return new NativeRpcStub(new TestBrokerReadSession(++brokerSessionCount));
+    return new NativeRpcStub(new TestBrokerReadSession(handle, ++brokerSessionCount));
+  }
+
+  async registerSourceAccess(handle: string): Promise<string | null> {
+    return brokerRegistration(handle)?.sourceAccessId ?? null;
   }
 }
 
@@ -225,12 +264,22 @@ export class WwwkTestParent extends DurableObject<Cloudflare.Env> {
   }
 
   setLinkedSourceRevoked(revoked: boolean): void {
-    brokerRevoked = revoked;
+    if (!brokerHandle) return;
+    const registration = brokerRegistrations.get(brokerHandle);
+    if (registration) registration.revoked = revoked;
   }
 
   setLinkedSourceKind(vendorId: string, tsType: string): void {
     brokerVendorId = vendorId;
     brokerTsType = tsType;
+  }
+
+  setSourceObservationAllowed(allowed: boolean): void {
+    sourceObservationAllowed = allowed;
+  }
+
+  observedSourceAccessIds(accountId: string): Promise<string[]> {
+    return this.gatekeeper(accountId).listObservedSourceAccessIds();
   }
 
   configureSharing(shared: boolean): void {

@@ -51,9 +51,12 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 - Context Library との連携は、将来の任意 Source provider Adapter として扱う。
 - WWWK のデータや frontmatter を権限の正本にしない。
 - 共同利用者の外部 verifier、認証情報、capability を WWWK へ渡さない。
-- 共有 Gadget の observer 検証は、CFOS が発行する限定 Broker に委ねる。
-- Broker は、CFOS の信頼済み登録に結び付いた非ポータブルな opaque
-  `sourceAccessId` だけを受け取り、成功または拒否を返す。
+- 共有 Gadget の observer 検証は、CFOS のSourceAccess Brokerと既存vendor Gatekeeperに
+  委ねる。WWWKはverifier、認証情報、capability、Sessionを受け取らない。
+- `sourceAccessId`は非bearer・非ポータブルなopaque IDとし、CFOSの信頼済み対応表は
+  Source側OverseerのKVだけに保持する。WWWKはIDを実行時KVにだけ保存できる。
+- `sourceAccessId`、handle、verifier、Session、tokenをSQL、frontmatter、export、Agent結果、
+  action/observation descriptionへ含めない。
 - CFOS のセキュリティ境界を迂回する設計を禁止する。
 - `ingest()` は必ず CFOS の approval queue へ送り、初期実装では自動承認を許可しない。
 - 初期 action は短い保存意図確認とし、`awaitDecision` を有効にして、3 層をまとめて
@@ -139,12 +142,17 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 - 権限失効の判定と影響範囲の特定を LLM に任せない。
 - Source 更新時は新しい revision を作り、影響する派生データだけを再生成する。
 - `WwwkLibrary` は所有者専用とし、共同利用者へ検索や直接参照を許可しない。
-- 共有 Gadget の observation は、生成依存を Source revision まで辿り、共同利用者が
-  全 Linked Source の検証に成功した場合だけ許可する。
+- 共有 Gadget の observation は、実際に返す文書の生成依存を Source revision まで辿り、
+  共同利用者が全 Linked Source の検証に成功した場合だけ許可する。ingestだけでは
+  observer要件を追加しない。
 - Owned Source、拒否、未登録、vendor 不一致、障害、不明な依存は fail-closed とする。
 - observer が Gadget を開くたびに生成依存の閉包を再検証する。
 - 生成依存へ新しい Source が加わった場合は既存 observer を再検証し、失敗時は
   `excludeObservers` を通して CFOS に observation を遮断させる。
+- 観測済みSourceの集合は、CFOSで既存observerを検証した後、返却前にWWWK Gatekeeperの
+  KVへ保存する。失敗時の過剰記録は許容するが、返却後の未記録は許可しない。
+- Phase 4の共有検証は同一Overseer/workspaceに限定する。別workspace由来のSourceは
+  明示的にfail-closedとする。
 - ポータブルデータへ秘密情報や実行時 capability を含めない。
 
 ## ドキュメントとコード
@@ -182,7 +190,6 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 高度な検索、Source 更新の検知、UI、LLM、バックグラウンド処理、Agent Skill の具体的な
 内容と更新などの追加操作 API、本番用 package の配布方法、アップグレード、
 アンインストールの詳細、Context Library の専用 Adapter、Linked Source の全文出力を許可する
-具体的な契約、reference-only bundle の詳細、observer 検証 Broker の発行、失効、
-account 選択、Gatekeeper への受け渡し、`sourceAccessId` の登録、Owned Source の
-明示的な共有ポリシー、Wiki の直接共有機能は未決定である。必要になるまで選定や
+具体的な契約、reference-only bundle の詳細、Owned Source の明示的な共有ポリシー、
+Wiki の直接共有機能は未決定である。必要になるまで選定や
 雛形作成を行わない。
