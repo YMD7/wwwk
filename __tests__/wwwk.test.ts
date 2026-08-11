@@ -391,15 +391,23 @@ describe("WwwkGatekeeper", () => {
     expect(source?.content).toBe(batch.source.content);
     await expect(parent.search("owner-b", "検証用")).resolves.toEqual([]);
 
-    await parent.configureSharing(true);
+    await abortAllDurableObjects();
+    const reconnectedParent = testEnv.WWWK_TEST_PARENT.getByName("parent-a");
+    const reconnectedResults = await reconnectedParent.search("owner-a", "検証用");
+    expect(reconnectedResults).toHaveLength(1);
     await expect(
-      parent.searchOutcome("owner-a", "検証用"),
+      reconnectedParent.read("owner-a", reconnectedResults[0].id),
+    ).resolves.toMatchObject({content: batch.wiki.content});
+
+    await reconnectedParent.configureSharing(true);
+    await expect(
+      reconnectedParent.searchOutcome("owner-a", "検証用"),
     ).resolves.toMatchObject({
       ok: false,
       error: expect.stringContaining("shared"),
     });
     await expect(
-      parent.readOutcome("owner-a", results[0].id),
+      reconnectedParent.readOutcome("owner-a", reconnectedResults[0].id),
     ).resolves.toMatchObject({
       ok: false,
       error: expect.stringContaining("shared"),

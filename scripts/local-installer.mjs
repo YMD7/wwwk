@@ -69,6 +69,26 @@ function requireSafeDirectory(path, label) {
   return resolved;
 }
 
+async function canonicalPath(path, label) {
+  const resolved = requireSafeDirectory(path, label);
+  let ancestor = resolved;
+  while (!existsSync(ancestor)) {
+    const parent = dirname(ancestor);
+    if (parent === ancestor) fail(`${label} cannot be resolved.`);
+    ancestor = parent;
+  }
+  let canonicalAncestor;
+  try {
+    canonicalAncestor = await realpath(ancestor);
+  } catch {
+    fail(`${label} cannot be resolved.`);
+  }
+  return requireSafeDirectory(
+    resolve(canonicalAncestor, relative(ancestor, resolved)),
+    label,
+  );
+}
+
 async function canonicalExistingDirectory(path, label) {
   try {
     return await realpath(path);
@@ -98,15 +118,26 @@ export function parseArgs(argv) {
   return options;
 }
 
-export function integrationPaths(cfosRoot, stateDir) {
-  const safeStateDir = requireSafeDirectory(stateDir, "State directory");
-  const managedRoot = `${safeStateDir}.wwwk`;
+export async function integrationPaths(cfosRoot, stateDir) {
+  const safeStateDir = await canonicalPath(stateDir, "State directory");
+  const managedRoot = await canonicalPath(`${safeStateDir}.wwwk`, "Managed state directory");
   const key = createHash("sha256").update(cfosRoot).digest("hex").slice(0, 16);
+  const integrationPath = await canonicalPath(
+    join(managedRoot, "integrations", `cfos-${key}`),
+    "Integration path",
+  );
+  if (
+    isWithin(safeStateDir, cfosRoot) ||
+    isWithin(managedRoot, cfosRoot) ||
+    isWithin(integrationPath, cfosRoot)
+  ) {
+    fail("State must be outside the CFOS checkout.");
+  }
   return {
     stateDir: safeStateDir,
     managedRoot,
     metadataPath: join(managedRoot, metadataFile),
-    integrationPath: join(managedRoot, "integrations", `cfos-${key}`),
+    integrationPath,
   };
 }
 
@@ -162,7 +193,11 @@ async function verifyWwwkRuntime() {
 }
 
 async function verifyState(cfosRoot, paths, dryRun) {
-  if (isWithin(paths.stateDir, cfosRoot) || isWithin(paths.integrationPath, cfosRoot)) {
+  if (
+    isWithin(paths.stateDir, cfosRoot) ||
+    isWithin(paths.managedRoot, cfosRoot) ||
+    isWithin(paths.integrationPath, cfosRoot)
+  ) {
     fail("State must be outside the CFOS checkout.");
   }
   const expected = expectedMetadata(cfosRoot, paths);
@@ -260,7 +295,7 @@ async function installDependencies(integrationPath) {
 export async function prepareIntegration({cfos, stateDir, dryRun = false}) {
   const cfosRoot = await verifyCfos(cfos);
   await verifyWwwkRuntime();
-  const paths = integrationPaths(cfosRoot, stateDir);
+  const paths = await integrationPaths(cfosRoot, stateDir);
   await verifyState(cfosRoot, paths, dryRun);
   if (dryRun) return {cfosRoot, paths, dryRun: true};
 
@@ -279,7 +314,7 @@ export async function prepareIntegration({cfos, stateDir, dryRun = false}) {
 
 export async function disconnectLocal({cfos, stateDir, dryRun = false}) {
   const cfosRoot = await verifyCfos(cfos);
-  const paths = integrationPaths(cfosRoot, stateDir);
+  const paths = await integrationPaths(cfosRoot, stateDir);
   const metadata = await loadMetadata(paths.metadataPath);
   if (!matchesMetadata(metadata, expectedMetadata(cfosRoot, paths))) {
     fail("Managed state ownership cannot be verified.");
