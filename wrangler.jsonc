@@ -8,6 +8,13 @@
   },
   "compatibility_date": "2026-02-02",
   "compatibility_flags": ["nodejs_compat"],
+  "services": [
+    {
+      "binding": "CFOS_SOURCE_ACCESS_BROKER",
+      "service": "workshop-backend",
+      "entrypoint": "SourceAccessBroker"
+    }
+  ],
   "rules": [
     {
       "type": "Text",

@@ -416,6 +416,81 @@ describe("WwwkGatekeeper", () => {
     await expect(parent.search("owner-a", "検証用")).resolves.toEqual([]);
   });
 
+  it("Linked Notion Sourceを承認後に保存し、再起動後も再認可する", async () => {
+    const parent = testEnv.WWWK_TEST_PARENT.getByName("linked-parent");
+    await parent.configureSharing(false);
+    await parent.setLinkedSourceRevoked(false);
+    const action = await parent.ingestLinked("linked-owner");
+
+    expect(action.description.awaitDecision).toBe(true);
+    expect(action.description.description).toContain("連携テストページ");
+    expect(action.description.description).toContain("https://www.notion.so/example/linked-page");
+    expect(action.description.description).not.toContain("fresh-session-1");
+    await parent.approve("linked-owner", action.actionId);
+
+    const results = await parent.search("linked-owner", "連携ページ");
+    expect(results).toHaveLength(1);
+    const wiki = await parent.read("linked-owner", results[0].id);
+    const evidence = await parent.read("linked-owner", wiki!.inputs[0].id);
+    const source = await parent.read("linked-owner", evidence!.inputs[0].id);
+    expect(source?.content).toBe("fresh-session-1");
+    await runInDurableObject(
+      testEnv.WWWK_LIBRARY.getByName("linked-owner"),
+      (_instance, state) => {
+        expect(state.storage.sql.exec<{ count: number }>(
+          "SELECT COUNT(*) AS count FROM linked_sources",
+        ).one().count).toBe(1);
+        expect(state.storage.kv.get(`sourceAccess:${source!.id}`)).toBeDefined();
+      },
+    );
+
+    await abortAllDurableObjects();
+    await expect(
+      testEnv.WWWK_TEST_PARENT.getByName("linked-parent")
+        .read("linked-owner", source!.id),
+    ).resolves.toMatchObject({ content: source!.content });
+  });
+
+  it("Linked Sourceの拒否と失効をfail-closedにする", async () => {
+    const parent = testEnv.WWWK_TEST_PARENT.getByName("linked-parent");
+    await parent.configureSharing(false);
+    await parent.setLinkedSourceRevoked(false);
+    const rejected = await parent.ingestLinked("linked-rejected");
+    await parent.reject("linked-rejected", rejected.actionId);
+    await runInDurableObject(
+      testEnv.WWWK_LIBRARY.getByName("linked-rejected"),
+      (_instance, state) => {
+        expect(state.storage.sql.exec<{ count: number }>(
+          "SELECT COUNT(*) AS count FROM linked_sources",
+        ).one().count).toBe(0);
+        expect(state.storage.kv.get("sourceAccess:missing")).toBeUndefined();
+      },
+    );
+
+    const action = await parent.ingestLinked("linked-revoked");
+    await parent.approve("linked-revoked", action.actionId);
+    const results = await parent.search("linked-revoked", "連携ページ");
+    const wikiId = results[0].id;
+    await parent.setLinkedSourceRevoked(true);
+
+    await expect(parent.search("linked-revoked", "連携ページ")).resolves.toEqual([]);
+    await expect(parent.read("linked-revoked", wikiId)).resolves.toBeNull();
+    await runInDurableObject(
+      testEnv.WWWK_LIBRARY.getByName("linked-revoked"),
+      async (instance) => {
+        await expect(instance.exportBundle()).rejects.toThrow("Linked Sources");
+      },
+    );
+    await runInDurableObject(
+      testEnv.WWWK_LIBRARY.getByName("linked-revoked"),
+      (_instance, state) => {
+        expect(state.storage.sql.exec<{ count: number }>(
+          "SELECT COUNT(*) AS count FROM documents WHERE is_available = 1",
+        ).one().count).toBe(0);
+      },
+    );
+  });
+
   it("revoke後は再起動しても旧Facetとpending actionを拒否する", async () => {
     const parent = testEnv.WWWK_TEST_PARENT.getByName("parent-a");
     await parent.configureSharing(false);

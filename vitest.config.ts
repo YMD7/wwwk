@@ -30,11 +30,19 @@ export default defineConfig({
             className: "WwwkTestParent",
             useSQLite: true,
           },
+          OPAQUE_HANDLE_POC: {
+            className: "OpaqueHandlePoc",
+            useSQLite: true,
+          },
         },
         serviceBindings: {
           TEST_APPROVAL_QUEUE: {
             name: kCurrentWorker,
             entrypoint: "TestApprovalQueue",
+          },
+          CFOS_SOURCE_ACCESS_BROKER: {
+            name: kCurrentWorker,
+            entrypoint: "TestSourceBroker",
           },
         },
       },
