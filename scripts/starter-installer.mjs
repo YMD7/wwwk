@@ -820,7 +820,8 @@ export function verifyWwwkBrokerIdentity(version, workshopWorkerName) {
     brokers.length !== 1 ||
     brokers[0].type !== "service" ||
     brokers[0].service !== workshopWorkerName ||
-    brokers[0].entrypoint !== "SourceAccessBroker"
+    brokers[0].entrypoint !== "SourceAccessBroker" ||
+    brokers[0].environment !== undefined
   ) {
     fail("Existing WWWK CFOS_SOURCE_ACCESS_BROKER identity does not match.");
   }

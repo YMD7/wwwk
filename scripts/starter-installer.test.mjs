@@ -491,6 +491,12 @@ test("accepts an absent WWWK broker and rejects unsafe broker identities", () =>
     /CFOS_SOURCE_ACCESS_BROKER identity/,
   );
   broker.entrypoint = "SourceAccessBroker";
+  broker.environment = "other";
+  assert.throws(
+    () => verifyWwwkBrokerIdentity(version, "workshop"),
+    /CFOS_SOURCE_ACCESS_BROKER identity/,
+  );
+  delete broker.environment;
   version.resources.bindings.push({...broker});
   assert.throws(
     () => verifyWwwkBrokerIdentity(version, "workshop"),
