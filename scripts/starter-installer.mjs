@@ -752,26 +752,18 @@ function verifyWorkshopServices(bindings, workshopConfig) {
 }
 
 function verifyWorkshopDurableObjects(version, workshopConfig) {
-  const expectedClasses = (workshopConfig.migrations ?? []).flatMap(
+  const migrations = workshopConfig.migrations ?? [];
+  const expectedClasses = migrations.flatMap(
     migration => migration.new_sqlite_classes ?? [],
   );
   if (expectedClasses.length === 0) return;
-  const exports = version?.resources?.script_runtime?.exports;
-  if (!exports || typeof exports !== "object" || Array.isArray(exports)) {
-    fail("Workshop Worker version does not expose Durable Object exports.");
-  }
-  for (const name of expectedClasses) {
-    const entry = exports[name];
-    if (
-      !entry ||
-      typeof entry !== "object" ||
-      Array.isArray(entry) ||
-      entry.type !== "durable-object" ||
-      entry.storage !== "sqlite" ||
-      (entry.state !== undefined && entry.state !== "created")
-    ) {
-      fail(`Existing Workshop ${name} Durable Object export identity does not match.`);
-    }
+  const latestTag = migrations.at(-1)?.tag;
+  if (
+    typeof latestTag !== "string" ||
+    !latestTag ||
+    version?.resources?.script_runtime?.migration_tag !== latestTag
+  ) {
+    fail("Existing Workshop Durable Object migration identity does not match.");
   }
 }
 

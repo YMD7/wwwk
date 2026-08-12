@@ -538,13 +538,19 @@ test("rejects changed access variables and service identities before live deploy
   );
 });
 
-test("rejects changed Workshop Durable Object exports before live deploy", () => {
+test("verifies the latest Workshop legacy Durable Object migration", () => {
   const config = {
     ...workshopConfig,
-    migrations: [{
-      tag: "v0",
-      new_sqlite_classes: ["UserDurableObject", "OverseerDurableObject"],
-    }],
+    migrations: [
+      {
+        tag: "v0",
+        new_sqlite_classes: ["UserDurableObject", "OverseerDurableObject"],
+      },
+      {
+        tag: "v1",
+        new_sqlite_classes: ["AdminSettings"],
+      },
+    ],
   };
   const version = {resources: {
     bindings: [
@@ -564,16 +570,13 @@ test("rejects changed Workshop Durable Object exports before live deploy", () =>
         entrypoint: "GatekeeperVendor",
       },
     ],
-    script_runtime: {exports: {
-      UserDurableObject: {type: "durable-object", storage: "sqlite"},
-      OverseerDurableObject: {type: "durable-object", storage: "sqlite", state: "created"},
-    }},
+    script_runtime: {migration_tag: "v1"},
   }};
   assert.doesNotThrow(() => verifyExistingWorkshopIdentity(version, config));
-  version.resources.script_runtime.exports.UserDurableObject.storage = "legacy-kv";
+  version.resources.script_runtime.migration_tag = "v0";
   assert.throws(
     () => verifyExistingWorkshopIdentity(version, config),
-    /UserDurableObject Durable Object export identity does not match/,
+    /Durable Object migration identity does not match/,
   );
 });
 
