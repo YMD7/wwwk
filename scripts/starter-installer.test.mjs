@@ -17,6 +17,7 @@ import test from "node:test";
 
 import {
   createStarterConfigs,
+  isMissingWorkerError,
   liveWranglerOptions,
   loadExternalDeploymentConfig,
   parseArgs,
@@ -409,6 +410,18 @@ test("uses only the current production deployment version", () => {
     ],
   }), /cannot be identified uniquely/);
   assert.throws(() => productionVersionId({deployments: deploymentHistory}), /cannot be identified uniquely/);
+});
+
+test("recognizes current and legacy missing Worker responses", () => {
+  assert.equal(isMissingWorkerError({
+    stderr: "This Worker does not exist on your account. [code: 10007]",
+  }), true);
+  assert.equal(isMissingWorkerError({
+    stdout: "The Worker has no deployments.",
+  }), true);
+  assert.equal(isMissingWorkerError({
+    stderr: "A request to the Cloudflare API failed. [code: 10000]",
+  }), false);
 });
 
 test("rejects changed access variables and service identities before live deploy", () => {
