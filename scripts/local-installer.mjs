@@ -17,6 +17,7 @@ const officialCfosRemotes = new Set([
   "ssh://git@github.com/cloudflare/cloudflare-os.git",
 ]);
 const metadataFile = "local-installer.json";
+const runnerFile = "local-runner.json";
 const localWwwkWorker = "gatekeeper-wwwk";
 const localWwwkClasses = ["WwwkLibrary", "WwwkGatekeeper"];
 
@@ -144,6 +145,7 @@ export async function integrationPaths(cfosRoot, stateDir) {
     stateDir: safeStateDir,
     managedRoot,
     metadataPath: join(managedRoot, metadataFile),
+    runnerPath: join(managedRoot, runnerFile),
     integrationPath,
   };
 }
@@ -229,6 +231,59 @@ async function registeredWorktrees(cfosRoot) {
     .map(line => line.slice("worktree ".length));
 }
 
+async function loadRunnerPid(path) {
+  if (!existsSync(path)) return undefined;
+  const entry = await lstat(path);
+  if (!entry.isFile() || entry.isSymbolicLink() || (entry.mode & 0o077) !== 0) {
+    fail("Local runner marker is not an owner-only regular file.");
+  }
+  let marker;
+  try {
+    marker = JSON.parse(await readFile(path, "utf8"));
+  } catch {
+    fail("Local runner marker is invalid.");
+  }
+  if (marker?.format !== 1 || !Number.isSafeInteger(marker.pid) || marker.pid <= 0) {
+    fail("Local runner marker is invalid.");
+  }
+  return marker.pid;
+}
+
+export function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    if (error?.code === "EPERM") return true;
+    throw error;
+  }
+}
+
+export async function assertLocalRunnerStopped(paths) {
+  const pid = await loadRunnerPid(paths.runnerPath);
+  if (pid !== undefined && isProcessAlive(pid)) {
+    fail("Local CFOS is still running for this managed state.");
+  }
+}
+
+async function withLocalRunnerMarker(paths, callback) {
+  const stalePid = await loadRunnerPid(paths.runnerPath);
+  if (stalePid !== undefined) {
+    if (isProcessAlive(stalePid)) fail("Local CFOS is already running for this managed state.");
+    await rm(paths.runnerPath);
+  }
+  await writeFile(paths.runnerPath, `${JSON.stringify({format: 1, pid: process.pid})}\n`, {
+    mode: 0o600,
+    flag: "wx",
+  });
+  try {
+    return await callback();
+  } finally {
+    await rm(paths.runnerPath, {force: true});
+  }
+}
+
 export function localWwwkNamespacePaths(stateDir) {
   // 対応対象のWrangler 4.119.0では、DO namespace keyはWorker名とclass名から決まる。
   const root = resolve(stateDir, "v3", "do");
@@ -302,6 +357,7 @@ export async function eraseLocal({cfos, stateDir, dryRun = false, apply = false}
   if (!matchesMetadata(metadata, expectedMetadata(cfosRoot, paths))) {
     fail("Managed state ownership cannot be verified.");
   }
+  await assertLocalRunnerStopped(paths);
   if (
     existsSync(paths.integrationPath) ||
     (await registeredWorktrees(cfosRoot)).includes(paths.integrationPath)
@@ -424,10 +480,11 @@ async function main() {
       ? await eraseLocal(options)
       : await prepareIntegration(options);
   if (result.dryRun || options.command !== "run") return;
-  await run("pnpm", ["run", "dev-server", "--", "--persist-to", result.paths.stateDir], {
-    cwd: result.paths.integrationPath,
-    stdio: "inherit",
-  });
+  await withLocalRunnerMarker(result.paths, () =>
+    run("pnpm", ["run", "dev-server", "--", "--persist-to", result.paths.stateDir], {
+      cwd: result.paths.integrationPath,
+      stdio: "inherit",
+    }));
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

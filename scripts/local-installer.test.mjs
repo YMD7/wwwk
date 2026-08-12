@@ -6,6 +6,8 @@ import { join } from "node:path";
 
 import {
   integrationPaths,
+  assertLocalRunnerStopped,
+  isProcessAlive,
   localWwwkNamespacePaths,
   parseArgs,
   removeLocalWwwkData,
@@ -129,4 +131,30 @@ test("rejects symlinked local WWWK namespace state", async t => {
 
   await assert.rejects(removeLocalWwwkData(stateDir), /must be a real directory/);
   await assert.doesNotReject(lstat(outside));
+});
+
+test("rejects data erasure while the managed local runner is alive", async t => {
+  const root = await mkdtemp(join(tmpdir(), "wwwk-local-runner-"));
+  t.after(() => rm(root, {recursive: true, force: true}));
+  const marker = join(root, "local-runner.json");
+  await writeFile(marker, `${JSON.stringify({format: 1, pid: process.pid})}\n`, {
+    mode: 0o600,
+  });
+
+  assert.equal(isProcessAlive(process.pid), true);
+  await assert.rejects(
+    assertLocalRunnerStopped({runnerPath: marker}),
+    /still running/,
+  );
+});
+
+test("accepts a stale owner-only local runner marker", async t => {
+  const root = await mkdtemp(join(tmpdir(), "wwwk-local-runner-"));
+  t.after(() => rm(root, {recursive: true, force: true}));
+  const marker = join(root, "local-runner.json");
+  await writeFile(marker, `${JSON.stringify({format: 1, pid: 2_147_483_647})}\n`, {
+    mode: 0o600,
+  });
+
+  await assert.doesNotReject(assertLocalRunnerStopped({runnerPath: marker}));
 });
