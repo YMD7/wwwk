@@ -19,6 +19,7 @@ import {
   createStarterConfigs,
   createWwwkErasureConfig,
   isMissingWorkerError,
+  isUnknownWorkerError,
   liveWranglerOptions,
   loadExternalDeploymentConfig,
   parseArgs,
@@ -30,6 +31,8 @@ import {
   verifyWwwkDeletionVersion,
   verifyWwwkDurableObjectIdentity,
   verifyWwwkEraseIdentity,
+  validateBootstrapResources,
+  validateWwwkWorkerName,
   withTemporaryWranglerConfigs,
   workshopFrontendBuildOptions,
   writeTemporaryWranglerConfig,
@@ -87,7 +90,7 @@ function temporaryConfigs(value) {
   };
 }
 
-test("parses Starter install, disconnect, and data erasure commands", () => {
+test("parses Starter bootstrap, install, disconnect, and data erasure commands", () => {
   assert.deepEqual(parseArgs([
     "--starter", "/tmp/starter",
     "--wwwk-worker", "my-wwwk",
@@ -100,6 +103,13 @@ test("parses Starter install, disconnect, and data erasure commands", () => {
     stateDir: "/tmp/state",
     deploymentConfig: "/tmp/deployment.jsonc",
   });
+  assert.equal(parseArgs([
+    "bootstrap",
+    "--starter", "/tmp/starter",
+    "--wwwk-worker", "my-wwwk",
+    "--state-dir", "/tmp/state",
+    "--deployment-config", "/tmp/deployment.jsonc",
+  ]).command, "bootstrap");
   assert.equal(parseArgs([
     "disconnect",
     "--starter", "/tmp/starter",
@@ -335,6 +345,36 @@ test("creates reciprocal bindings while preserving SQLite Durable Object exports
   assert.equal(workshopConfig.services.length, 2);
 });
 
+test("requires a dedicated WWWK Worker name", () => {
+  const deployment = {workers: {
+    workshop: {name: "workshop"},
+    context: {name: "context"},
+    customGatekeeper: {name: "custom"},
+  }};
+  assert.doesNotThrow(() => validateWwwkWorkerName(deployment, "wwwk"));
+  assert.throws(
+    () => validateWwwkWorkerName(deployment, "context"),
+    /must differ from every Starter Worker/,
+  );
+});
+
+test("requires explicit storage identities for Starter bootstrap", () => {
+  const deployment = {
+    context: {kvNamespaceId: "context-kv"},
+    resources: {
+      blueprintsKvNamespaceId: "blueprints-kv",
+      avatarsKvNamespaceId: "avatars-kv",
+      blueprintContentBucket: "blueprint-content",
+    },
+  };
+  assert.doesNotThrow(() => validateBootstrapResources(deployment));
+  deployment.resources.avatarsKvNamespaceId = null;
+  assert.throws(
+    () => validateBootstrapResources(deployment),
+    /explicit resources\.avatarsKvNamespaceId/,
+  );
+});
+
 test("disconnect removes only the reciprocal service bindings", () => {
   const disconnected = createStarterConfigs({
     workshopConfig,
@@ -442,12 +482,17 @@ test("uses only the current production deployment version", () => {
 });
 
 test("recognizes current and legacy missing Worker responses", () => {
-  assert.equal(isMissingWorkerError({
+  const unknownWorker = {
     stderr: "This Worker does not exist on your account. [code: 10007]",
-  }), true);
+  };
+  assert.equal(isMissingWorkerError(unknownWorker), true);
+  assert.equal(isUnknownWorkerError(unknownWorker), true);
   assert.equal(isMissingWorkerError({
     stdout: "The Worker has no deployments.",
   }), true);
+  assert.equal(isUnknownWorkerError({
+    stdout: "The Worker has no deployments.",
+  }), false);
   assert.equal(isMissingWorkerError({
     stderr: "A request to the Cloudflare API failed. [code: 10000]",
   }), false);

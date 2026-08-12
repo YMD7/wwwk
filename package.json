@@ -15,6 +15,7 @@
     "disconnect:local": "node scripts/local-installer.mjs disconnect",
     "erase:local": "node scripts/local-installer.mjs erase",
     "install:starter": "node scripts/starter-installer.mjs",
+    "bootstrap:starter": "node scripts/starter-installer.mjs bootstrap",
     "disconnect:starter": "node scripts/starter-installer.mjs disconnect",
     "erase:starter": "node scripts/starter-installer.mjs erase"
   },

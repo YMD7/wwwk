@@ -194,6 +194,24 @@ state、ログ、PRへ書かず、dry-runには追跡されたfixtureだけを�
 
 新規 Starter は先に基底deploymentを別の明示承認で完了している必要がある。
 
+基底deploymentがない新規環境では、同じ外部configと固定tupleからplan / dry-runを実行する。
+
+```sh
+pnpm run bootstrap:starter -- \
+  --starter "$STARTER_ROOT" \
+  --wwwk-worker "$WWWK_WORKER" \
+  --deployment-config "$DEPLOYMENT_CONFIG"
+```
+
+`--apply`では、Context KV、Blueprints KV、Avatars KV、Blueprint Content R2のIDまたは名前を
+外部configへ明示する。自動provisionは後続のidentity照合へ引き継げないため使用しない。すべての
+対象Worker名にversionが存在しないことをlive確認し、Workshop名を含む完全一致の対話確認後にだけ
+Error Reporter、Context、Custom Gatekeeper、Workshopの順でstrict deployする。実値は既存live
+runnerと同じowner-only一時configだけに置く。この操作はWWWKをdeployまたは接続しない。
+
+途中で失敗した場合、成功済みの新規Workerは残る。自動rollbackは行わず、live状態を確認してから
+残ったWorkerを明示的に整理し、未使用名で再実行する。
+
 ## アンインストール
 
 アンインストールは接続解除とデータ消去を分離する。
