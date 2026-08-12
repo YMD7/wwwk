@@ -6,7 +6,8 @@
 関係しない抽象化、複数 version 対応、網羅的なテストは後回しにする。現在のフェーズが
 完了するまで次を実装しない。
 
-現在地: Phase 0 から Phase 6 は完了。次は Phase 7 の Starter への install / disconnect。
+現在地: Phase 0 から Phase 6 は完了。Phase 7 は Starter installer の dry-run 実装を完了し、
+Cloudflare 実環境での受入確認を残している。
 
 ## 導入方式の決定
 
@@ -138,6 +139,11 @@ disconnectは管理worktreeだけを外し、stateとWWWK dataを保持する。
   戻す。WWWK Worker は broker binding を外すが、Durable Object class とデータを保持する。
 - 再接続後に保持した WWWK データを利用できる。
 - 失敗時に利用者のcheckoutを変更せず、既存の有効なWorkshop versionを失わない。
+
+**現在の実装:** `pnpm run install:starter` と `pnpm run disconnect:starter` は、固定tupleを
+専用 integration worktreeへ再現し、外部`deployment.jsonc`をread-onlyで検証する。実値を含まない
+fixtureで生成設定、build、Wrangler dry-runを行う。実値をartifactへ書かないlive runnerは未実装の
+ため`--apply`はfail-closedで拒否する。実環境の受入確認は完了条件として残す。
 
 対象外: 公式 hosted deploy、完全消去、自動 upgrade、複数 version 対応、配布 UI。
 

@@ -4,7 +4,9 @@
 
 WWWK の利用者向け導入方式は、version 固定の installer とする。特定の CFOS または
 `cloudflare-os-starter` fork は要求しない。Phase 6では対応する公式 CFOS clone をローカルで
-起動する入口を提供する。Starterへの導入とCloudflare deployはまだ実装しない。
+起動する入口を提供する。Phase 7では対応する Starter checkout に対する build と Wrangler
+dry-run の入口を提供する。Cloudflare deploy は、実値をartifactへ書かない runner と実行直前の
+明示承認が必要であり、前者は未実装である。
 
 現在の symbolic link 手順は内部的なローカル開発専用である。利用者向けの install / uninstall
 契約にはしない。
@@ -156,6 +158,34 @@ version を同じ Worker 名へデプロイする。WWWK の
 公式 hosted deploy など、対応する Starter checkout と設定を確認できない deployment は、
 初期対象に含めない。
 
+### Starter の plan / dry-run
+
+次のコマンドは Starter checkout を変更せず、管理 state の integration worktree で固定 tuple、
+patch、設定を検証した後に build と Wrangler dry-run を行う。既定では Cloudflare の状態を読まず、
+deploy しない。
+
+```sh
+pnpm run install:starter -- \
+  --starter "$STARTER_ROOT" \
+  --wwwk-worker "$WWWK_WORKER" \
+  --deployment-config "$DEPLOYMENT_CONFIG"
+```
+
+接続解除の plan / dry-run は次のとおりである。
+
+```sh
+pnpm run disconnect:starter -- \
+  --starter "$STARTER_ROOT" \
+  --wwwk-worker "$WWWK_WORKER" \
+  --deployment-config "$DEPLOYMENT_CONFIG"
+```
+
+`$DEPLOYMENT_CONFIG` は Starter checkout と installer managed state の外に置く通常ファイルで、
+group / other の権限を持たない0600相当でなければならない。installer はcanonical pathを確認し、
+このファイルをread-onlyでメモリにだけ読み込む。実値はintegration worktree、generated config、ログへ
+書かず、dry-runには追跡されたfixtureだけを使う。新規 Starter は先に基底 deployment を別の
+明示承認で完了している必要がある。現時点の`--apply`はfail-closedで拒否する。
+
 ## アンインストール
 
 アンインストールは接続解除とデータ消去を分離する。
@@ -170,8 +200,9 @@ version を同じ Worker 名へデプロイする。WWWK の
   データを保持する。
 - CFOS から WWWK へ新しい Session を開始できない。
 
-双方向 binding と Workshop entrypoint を安全に外す具体的なデプロイ順は、Phase 7 で実際の
-Cloudflare binding contractを確認して確定する。推測した順序をinstallerへ実装しない。
+live runnerの実装後、disconnect は Workshop から `GATEKEEPER_WWWK` を外して先に deploy し、
+その後 WWWK から `CFOS_SOURCE_ACCESS_BROKER` を外して deploy する。どちらの deploy も事前の
+identity 検証と実行直前の明示承認が必要である。
 
 WWWK Worker、`WwwkLibrary`、portable bundle、WWWK repository は削除しない。再接続時は、
 同じ WWWK Worker とデータを利用できるようにする。
