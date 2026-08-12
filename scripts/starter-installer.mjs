@@ -801,6 +801,12 @@ async function wranglerJson(directory, args, configPath) {
   }
 }
 
+export function isMissingWorkerError(error) {
+  const output = `${error?.stdout ?? ""}\n${error?.stderr ?? ""}`;
+  return /has no deployments\./.test(output) ||
+    /This Worker does not exist on your account\. \[code: 10007\]/.test(output);
+}
+
 async function currentWorkerVersion(directory, workerName, configPath) {
   let deployment;
   try {
@@ -808,9 +814,7 @@ async function currentWorkerVersion(directory, workerName, configPath) {
       "deployments", "status", "--name", workerName,
     ], configPath);
   } catch (error) {
-    if (/has no deployments\./.test(`${error?.stdout ?? ""}\n${error?.stderr ?? ""}`)) {
-      return undefined;
-    }
+    if (isMissingWorkerError(error)) return undefined;
     throw error;
   }
   const versionId = productionVersionId(deployment);
