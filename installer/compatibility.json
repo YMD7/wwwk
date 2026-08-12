@@ -13,6 +13,7 @@
     "localPatch": "patches/cfos-8b08672-local-persist.patch"
   },
   "wwwk": {
-    "baseRevision": "4f24461f7fbeecce8419d338b2a9b754b0383d53"
+    "baseRevision": "8ba113e8b5c74f9722ed3e6cdb8ad515e86a2be7",
+    "patch": "patches/wwwk-8ba113e-stub-storage.patch"
   }
 }

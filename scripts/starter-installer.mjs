@@ -486,6 +486,7 @@ async function prepareIntegration(starterRoot, paths) {
   await applyPatch(paths.integrationPath, compatibility.starter.patch);
   await applyPatch(cfosRoot, compatibility.cfos.patch);
   await materializeRuntime(paths.integrationPath);
+  await applyPatch(cfosRoot, compatibility.wwwk.patch);
   await writeFile(
     join(cfosRoot, "pnpm-lock.yaml"),
     await readFile(join(wwwkRoot, "installer", compatibility.cfos.lockfile)),
