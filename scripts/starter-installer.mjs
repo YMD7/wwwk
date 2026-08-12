@@ -42,10 +42,11 @@ function fail(message) {
   throw new Error(`Starter installer: ${message}`);
 }
 
-function run(command, args, options = {}) {
+export function run(command, args, options = {}) {
   return new Promise((resolveRun, rejectRun) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
+      env: options.env ? {...process.env, ...options.env} : process.env,
       stdio: options.stdio ?? ["ignore", "pipe", "pipe"],
     });
     const stdout = [];
@@ -488,13 +489,22 @@ async function removeGeneratedConfigs(directories) {
   await Promise.all(directories.map(directory => rm(generatedPath(directory), {force: true})));
 }
 
+export function workshopFrontendBuildOptions(cfosRoot) {
+  return {
+    cwd: cfosRoot,
+    stdio: "inherit",
+    env: {VITE_CF_ACCESS_MODE: "true"},
+  };
+}
+
 async function buildAndDryRun(integrationPath, cfosRoot, directories) {
   await run("pnpm", ["--filter", "@gadgets/gatekeeper-context", "build"], {cwd: cfosRoot, stdio: "inherit"});
   await run("pnpm", ["--dir", "packages/custom-gatekeeper", "run", "build"], {cwd: integrationPath, stdio: "inherit"});
-  await run("pnpm", ["--filter", "@gadgets/workshop-frontend", "build"], {
-    cwd: cfosRoot,
-    stdio: "inherit",
-  });
+  await run(
+    "pnpm",
+    ["--filter", "@gadgets/workshop-frontend", "build"],
+    workshopFrontendBuildOptions(cfosRoot),
+  );
   await run("pnpm", ["--filter", "@gadgets/workshop-backend", "build"], {cwd: cfosRoot, stdio: "inherit"});
   await run("pnpm", ["run", "build"], {cwd: join(cfosRoot, "packages", "gatekeeper-wwwk"), stdio: "inherit"});
   for (const directory of directories) {

@@ -8,8 +8,10 @@ import {
   createStarterConfigs,
   loadExternalDeploymentConfig,
   parseArgs,
+  run,
   runStarterInstaller,
   verifyExistingWorkshopIdentity,
+  workshopFrontendBuildOptions,
 } from "./starter-installer.mjs";
 
 const workshopConfig = {services: [{binding: "GATEKEEPER_CONTEXT", service: "context"}]};
@@ -81,6 +83,21 @@ test("reads only canonical owner-only external deployment config", async () => {
 
 test("rejects live apply before reading or creating integration state", async () => {
   await assert.rejects(runStarterInstaller({apply: true}), /Live deploy is disabled/);
+});
+
+test("passes the Workshop Frontend Access mode flag to a child process", async () => {
+  const options = workshopFrontendBuildOptions("/fixture/cfos");
+  assert.deepEqual(options, {
+    cwd: "/fixture/cfos",
+    stdio: "inherit",
+    env: {VITE_CF_ACCESS_MODE: "true"},
+  });
+  const result = await run(process.execPath, [
+    "--input-type=module",
+    "--eval",
+    "process.stdout.write(process.env.VITE_CF_ACCESS_MODE ?? 'missing')",
+  ], {...options, cwd: process.cwd(), stdio: undefined});
+  assert.equal(result.stdout, "true");
 });
 
 test("creates reciprocal bindings while preserving SQLite Durable Object exports", () => {
