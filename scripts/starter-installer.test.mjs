@@ -56,6 +56,7 @@ const workshopConfig = {
   }],
 };
 const wwwkConfig = {
+  compatibility_flags: ["allow_irrevocable_stub_storage", "nodejs_compat"],
   services: [{
     binding: "CFOS_SOURCE_ACCESS_BROKER",
     service: "workshop-backend",
@@ -408,6 +409,14 @@ test("creates a deletion-only WWWK Worker config", () => {
 });
 
 test("rejects invalid Durable Object identity and conflicting Workshop bindings", () => {
+  assert.throws(() => createStarterConfigs({
+    workshopConfig,
+    wwwkConfig: {...wwwkConfig, compatibility_flags: ["nodejs_compat"]},
+    accountId: "account",
+    workshopWorkerName: "workshop",
+    wwwkWorkerName: "wwwk",
+    connected: true,
+  }), /persistent RPC stub storage/);
   const invalidExports = structuredClone(wwwkConfig);
   invalidExports.exports.WwwkLibrary.storage = "legacy-kv";
   assert.throws(() => createStarterConfigs({
