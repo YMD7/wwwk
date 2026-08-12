@@ -8,6 +8,7 @@ import {
   integrationPaths,
   assertLocalRunnerStopped,
   isProcessAlive,
+  withLocalStateLease,
   localWwwkNamespacePaths,
   parseArgs,
   removeLocalWwwkData,
@@ -137,14 +138,18 @@ test("rejects data erasure while the managed local runner is alive", async t => 
   const root = await mkdtemp(join(tmpdir(), "wwwk-local-runner-"));
   t.after(() => rm(root, {recursive: true, force: true}));
   const marker = join(root, "local-runner.json");
-  await writeFile(marker, `${JSON.stringify({format: 1, pid: process.pid})}\n`, {
+  await writeFile(marker, `${JSON.stringify({
+    format: 1,
+    operation: "run",
+    pid: process.pid,
+  })}\n`, {
     mode: 0o600,
   });
 
   assert.equal(isProcessAlive(process.pid), true);
   await assert.rejects(
     assertLocalRunnerStopped({runnerPath: marker}),
-    /still running/,
+    /already in use/,
   );
 });
 
@@ -152,9 +157,27 @@ test("accepts a stale owner-only local runner marker", async t => {
   const root = await mkdtemp(join(tmpdir(), "wwwk-local-runner-"));
   t.after(() => rm(root, {recursive: true, force: true}));
   const marker = join(root, "local-runner.json");
-  await writeFile(marker, `${JSON.stringify({format: 1, pid: 2_147_483_647})}\n`, {
+  await writeFile(marker, `${JSON.stringify({
+    format: 1,
+    operation: "run",
+    pid: 2_147_483_647,
+  })}\n`, {
     mode: 0o600,
   });
 
   await assert.doesNotReject(assertLocalRunnerStopped({runnerPath: marker}));
+});
+
+test("serializes local run and data erasure with one state lease", async t => {
+  const root = await mkdtemp(join(tmpdir(), "wwwk-local-runner-"));
+  t.after(() => rm(root, {recursive: true, force: true}));
+  const paths = {runnerPath: join(root, "local-runner.json")};
+
+  await withLocalStateLease(paths, "erase", async () => {
+    await assert.rejects(
+      withLocalStateLease(paths, "run", async () => {}),
+      /already in use/,
+    );
+  });
+  await assert.rejects(lstat(paths.runnerPath), /ENOENT/);
 });

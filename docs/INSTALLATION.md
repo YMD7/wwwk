@@ -235,8 +235,9 @@ pnpm run erase:local -- \
 - `gatekeeper-wwwk-WwwkGatekeeper` のローカル Durable Object namespace
 
 CFOS、ほかの Gatekeeper、KV、R2、管理metadata、`v3` state全体は保持する。対象または親が
-symbolic linkの場合は削除せず停止する。local runnerはmanaged stateにowner-onlyなPID markerを
-保持し、稼働中のprocessが同じstateを開いている場合も削除せず停止する。
+symbolic linkの場合は削除せず停止する。local runnerとeraseはmanaged stateのowner-onlyな
+PID leaseを排他的に取得し、同じstateを別processが使用中の場合も削除せず停止する。eraseは
+lease取得後にdisconnect状態を再検証してから削除する。
 
 Cloudflareでは、`disconnect:starter --apply`を完了した後に計画とWrangler dry-runを確認する。
 

@@ -231,7 +231,7 @@ async function registeredWorktrees(cfosRoot) {
     .map(line => line.slice("worktree ".length));
 }
 
-async function loadRunnerPid(path) {
+async function loadStateLease(path) {
   if (!existsSync(path)) return undefined;
   const entry = await lstat(path);
   if (!entry.isFile() || entry.isSymbolicLink() || (entry.mode & 0o077) !== 0) {
@@ -243,10 +243,15 @@ async function loadRunnerPid(path) {
   } catch {
     fail("Local runner marker is invalid.");
   }
-  if (marker?.format !== 1 || !Number.isSafeInteger(marker.pid) || marker.pid <= 0) {
+  if (
+    marker?.format !== 1 ||
+    !["run", "erase"].includes(marker.operation) ||
+    !Number.isSafeInteger(marker.pid) ||
+    marker.pid <= 0
+  ) {
     fail("Local runner marker is invalid.");
   }
-  return marker.pid;
+  return marker;
 }
 
 export function isProcessAlive(pid) {
@@ -261,26 +266,42 @@ export function isProcessAlive(pid) {
 }
 
 export async function assertLocalRunnerStopped(paths) {
-  const pid = await loadRunnerPid(paths.runnerPath);
-  if (pid !== undefined && isProcessAlive(pid)) {
-    fail("Local CFOS is still running for this managed state.");
+  const lease = await loadStateLease(paths.runnerPath);
+  if (lease !== undefined && isProcessAlive(lease.pid)) {
+    fail("Local state is already in use.");
   }
 }
 
-async function withLocalRunnerMarker(paths, callback) {
-  const stalePid = await loadRunnerPid(paths.runnerPath);
-  if (stalePid !== undefined) {
-    if (isProcessAlive(stalePid)) fail("Local CFOS is already running for this managed state.");
+export async function withLocalStateLease(paths, operation, callback) {
+  if (!["run", "erase"].includes(operation)) fail("Local state operation is invalid.");
+  const staleLease = await loadStateLease(paths.runnerPath);
+  if (staleLease !== undefined) {
+    if (isProcessAlive(staleLease.pid)) fail("Local state is already in use.");
     await rm(paths.runnerPath);
   }
-  await writeFile(paths.runnerPath, `${JSON.stringify({format: 1, pid: process.pid})}\n`, {
-    mode: 0o600,
-    flag: "wx",
-  });
+  try {
+    await writeFile(
+      paths.runnerPath,
+      `${JSON.stringify({format: 1, operation, pid: process.pid})}\n`,
+      {mode: 0o600, flag: "wx"},
+    );
+  } catch (error) {
+    if (error?.code === "EEXIST") fail("Local state is already in use.");
+    throw error;
+  }
   try {
     return await callback();
   } finally {
     await rm(paths.runnerPath, {force: true});
+  }
+}
+
+async function assertLocalDisconnected(cfosRoot, paths) {
+  if (
+    existsSync(paths.integrationPath) ||
+    (await registeredWorktrees(cfosRoot)).includes(paths.integrationPath)
+  ) {
+    fail("Disconnect WWWK and stop local CFOS before data erasure.");
   }
 }
 
@@ -358,16 +379,14 @@ export async function eraseLocal({cfos, stateDir, dryRun = false, apply = false}
     fail("Managed state ownership cannot be verified.");
   }
   await assertLocalRunnerStopped(paths);
-  if (
-    existsSync(paths.integrationPath) ||
-    (await registeredWorktrees(cfosRoot)).includes(paths.integrationPath)
-  ) {
-    fail("Disconnect WWWK and stop local CFOS before data erasure.");
-  }
+  await assertLocalDisconnected(cfosRoot, paths);
   printLocalErasePlan(paths);
   if (dryRun || !apply) return {cfosRoot, paths, dryRun: true};
   await confirmLocalErase();
-  const removed = await removeLocalWwwkData(paths.stateDir);
+  const removed = await withLocalStateLease(paths, "erase", async () => {
+    await assertLocalDisconnected(cfosRoot, paths);
+    return removeLocalWwwkData(paths.stateDir);
+  });
   return {cfosRoot, paths, applied: true, removed};
 }
 
@@ -468,6 +487,7 @@ export async function disconnectLocal({cfos, stateDir, dryRun = false}) {
   if (!matchesMetadata(metadata, expectedMetadata(cfosRoot, paths))) {
     fail("Managed state ownership cannot be verified.");
   }
+  await assertLocalRunnerStopped(paths);
   if (!dryRun) await removeManagedWorktree(cfosRoot, paths);
   return {cfosRoot, paths, dryRun};
 }
@@ -480,7 +500,7 @@ async function main() {
       ? await eraseLocal(options)
       : await prepareIntegration(options);
   if (result.dryRun || options.command !== "run") return;
-  await withLocalRunnerMarker(result.paths, () =>
+  await withLocalStateLease(result.paths, "run", () =>
     run("pnpm", ["run", "dev-server", "--", "--persist-to", result.paths.stateDir], {
       cwd: result.paths.integrationPath,
       stdio: "inherit",
