@@ -921,19 +921,13 @@ export function verifyWwwkEraseIdentity({
   }
 }
 
-export function verifyWwwkDeletionTombstones(version) {
+export function verifyWwwkDeletionVersion(version) {
   const exports = version?.resources?.script_runtime?.exports;
   if (!exports || typeof exports !== "object" || Array.isArray(exports)) {
-    fail("WWWK deletion version does not expose Durable Object tombstones.");
+    fail("WWWK deletion version does not expose runtime exports.");
   }
-  const durableObjects = Object.entries(exports).filter(([, entry]) =>
-    entry?.type === "durable-object");
-  if (
-    durableObjects.length !== wwwkClasses.length ||
-    durableObjects.some(([name, entry]) =>
-      !wwwkClasses.includes(name) || entry.state !== "deleted" || "storage" in entry)
-  ) {
-    fail("WWWK deletion version has unexpected Durable Object exports.");
+  if (Object.values(exports).some(entry => entry?.type === "durable-object")) {
+    fail("WWWK deletion version still has a live Durable Object export.");
   }
 }
 
@@ -1101,7 +1095,7 @@ async function eraseLive(configs, cfosRoot) {
       configs.wwwk.name,
       configPaths["wwwk-erasure"],
     );
-    verifyWwwkDeletionTombstones(deletionVersion);
+    verifyWwwkDeletionVersion(deletionVersion);
     await deleteWorker(
       directories["wwwk-erasure"],
       configs.wwwk.name,

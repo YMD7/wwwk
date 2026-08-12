@@ -27,7 +27,7 @@ import {
   runStarterInstaller,
   verifyExistingWorkshopIdentity,
   verifyWwwkBrokerIdentity,
-  verifyWwwkDeletionTombstones,
+  verifyWwwkDeletionVersion,
   verifyWwwkDurableObjectIdentity,
   verifyWwwkEraseIdentity,
   withTemporaryWranglerConfigs,
@@ -653,16 +653,18 @@ test("requires both sides to be disconnected before WWWK data erasure", () => {
   assert.throws(() => verifyWwwkEraseIdentity(options), /unexpected Durable Object exports/);
 });
 
-test("accepts only the two WWWK Durable Object deletion tombstones", () => {
+test("accepts a deletion version only after live Durable Object exports disappear", () => {
   const version = {resources: {script_runtime: {exports: {
-    WwwkLibrary: {type: "durable-object", state: "deleted"},
-    WwwkGatekeeper: {type: "durable-object", state: "deleted"},
+    default: {type: "worker", state: "created"},
   }}}};
-  assert.doesNotThrow(() => verifyWwwkDeletionTombstones(version));
-  version.resources.script_runtime.exports.WwwkGatekeeper.storage = "sqlite";
+  assert.doesNotThrow(() => verifyWwwkDeletionVersion(version));
+  version.resources.script_runtime.exports.WwwkGatekeeper = {
+    type: "durable-object",
+    storage: "sqlite",
+  };
   assert.throws(
-    () => verifyWwwkDeletionTombstones(version),
-    /unexpected Durable Object exports/,
+    () => verifyWwwkDeletionVersion(version),
+    /still has a live Durable Object export/,
   );
 });
 
