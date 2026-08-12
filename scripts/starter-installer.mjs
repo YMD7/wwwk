@@ -521,6 +521,20 @@ export function validateWwwkWorkerName(deployment, wwwkWorker) {
   }
 }
 
+export function validateBootstrapResources(deployment) {
+  const resources = [
+    ["context.kvNamespaceId", deployment.context?.kvNamespaceId],
+    ["resources.blueprintsKvNamespaceId", deployment.resources?.blueprintsKvNamespaceId],
+    ["resources.avatarsKvNamespaceId", deployment.resources?.avatarsKvNamespaceId],
+    ["resources.blueprintContentBucket", deployment.resources?.blueprintContentBucket],
+  ];
+  for (const [name, value] of resources) {
+    if (typeof value !== "string" || !value) {
+      fail(`Starter bootstrap requires an explicit ${name}.`);
+    }
+  }
+}
+
 function configEntries(configs) {
   const entries = [
     ["workshop", configs.starter?.workshop],
@@ -833,7 +847,12 @@ async function wranglerJson(directory, args, configPath) {
 export function isMissingWorkerError(error) {
   const output = `${error?.stdout ?? ""}\n${error?.stderr ?? ""}`;
   return /has no deployments\./.test(output) ||
-    /This Worker does not exist on your account\. \[code: 10007\]/.test(output);
+    isUnknownWorkerError(error);
+}
+
+export function isUnknownWorkerError(error) {
+  const output = `${error?.stdout ?? ""}\n${error?.stderr ?? ""}`;
+  return /This Worker does not exist on your account\. \[code: 10007\]/.test(output);
 }
 
 async function currentWorkerVersion(directory, workerName, configPath) {
@@ -854,6 +873,18 @@ async function currentWorkerVersion(directory, workerName, configPath) {
     "--name",
     workerName,
   ], configPath);
+}
+
+async function workerNameInUse(directory, workerName, configPath) {
+  try {
+    await wranglerJson(directory, [
+      "versions", "list", "--name", workerName,
+    ], configPath);
+    return true;
+  } catch (error) {
+    if (isUnknownWorkerError(error)) return false;
+    throw error;
+  }
 }
 
 export function verifyWwwkDurableObjectIdentity(version) {
@@ -965,10 +996,13 @@ async function verifyApplyIdentity(configs, cfosRoot, configPaths, command) {
   }
 }
 
-async function deploy(directory, configPath) {
+async function deploy(directory, configPath, {strict = false} = {}) {
   await run(
     "pnpm",
-    ["exec", "wrangler", "deploy", "--config", configPath],
+    [
+      "exec", "wrangler", "deploy", "--config", configPath,
+      ...(strict ? ["--strict"] : []),
+    ],
     liveWranglerOptions(directory),
   );
 }
@@ -1028,11 +1062,11 @@ async function deployStarterBootstrap(configs, cfosRoot) {
   return withTemporaryWranglerConfigs({starter: configs.starter}, async ({configPaths}) => {
     const verifyTargetsAbsent = async () => {
       for (const [name, config, directory] of targets) {
-        if (await currentWorkerVersion(directory, config.name, configPaths[name])) {
+        if (await workerNameInUse(directory, config.name, configPaths[name])) {
           fail(`Starter bootstrap target ${name} Worker already exists.`);
         }
       }
-      if (await currentWorkerVersion(
+      if (await workerNameInUse(
         cfosRoot,
         configs.wwwk.name,
         configPaths.workshop,
@@ -1046,13 +1080,13 @@ async function deployStarterBootstrap(configs, cfosRoot) {
     for (const [name, config] of targets) {
       console.log(`- create ${name} Worker: ${config.name}`);
     }
-    console.log("- Wrangler may provision configured KV namespaces and R2 bucket");
+    console.log("- use the explicit configured KV namespaces and R2 bucket");
     console.log("- WWWK is not deployed or connected by this operation");
     await confirmStarterBootstrap(configs.starter.workshop.name);
     await verifyTargetsAbsent();
 
     for (const [name, , directory] of targets) {
-      await deploy(directory, configPaths[name]);
+      await deploy(directory, configPaths[name], {strict: true});
     }
   }, {sourceDirectories: directories});
 }
@@ -1228,6 +1262,9 @@ export async function runStarterInstaller(options) {
     starterRoot,
     paths,
   );
+  if (options.command === "bootstrap" && options.apply) {
+    validateBootstrapResources(deployment);
+  }
   await verifyState(starterRoot, paths);
   const cfosRoot = await prepareIntegration(starterRoot, paths);
   const connected = options.command === "install";

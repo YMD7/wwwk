@@ -19,6 +19,7 @@ import {
   createStarterConfigs,
   createWwwkErasureConfig,
   isMissingWorkerError,
+  isUnknownWorkerError,
   liveWranglerOptions,
   loadExternalDeploymentConfig,
   parseArgs,
@@ -30,6 +31,7 @@ import {
   verifyWwwkDeletionVersion,
   verifyWwwkDurableObjectIdentity,
   verifyWwwkEraseIdentity,
+  validateBootstrapResources,
   validateWwwkWorkerName,
   withTemporaryWranglerConfigs,
   workshopFrontendBuildOptions,
@@ -356,6 +358,23 @@ test("requires a dedicated WWWK Worker name", () => {
   );
 });
 
+test("requires explicit storage identities for Starter bootstrap", () => {
+  const deployment = {
+    context: {kvNamespaceId: "context-kv"},
+    resources: {
+      blueprintsKvNamespaceId: "blueprints-kv",
+      avatarsKvNamespaceId: "avatars-kv",
+      blueprintContentBucket: "blueprint-content",
+    },
+  };
+  assert.doesNotThrow(() => validateBootstrapResources(deployment));
+  deployment.resources.avatarsKvNamespaceId = null;
+  assert.throws(
+    () => validateBootstrapResources(deployment),
+    /explicit resources\.avatarsKvNamespaceId/,
+  );
+});
+
 test("disconnect removes only the reciprocal service bindings", () => {
   const disconnected = createStarterConfigs({
     workshopConfig,
@@ -463,12 +482,17 @@ test("uses only the current production deployment version", () => {
 });
 
 test("recognizes current and legacy missing Worker responses", () => {
-  assert.equal(isMissingWorkerError({
+  const unknownWorker = {
     stderr: "This Worker does not exist on your account. [code: 10007]",
-  }), true);
+  };
+  assert.equal(isMissingWorkerError(unknownWorker), true);
+  assert.equal(isUnknownWorkerError(unknownWorker), true);
   assert.equal(isMissingWorkerError({
     stdout: "The Worker has no deployments.",
   }), true);
+  assert.equal(isUnknownWorkerError({
+    stdout: "The Worker has no deployments.",
+  }), false);
   assert.equal(isMissingWorkerError({
     stderr: "A request to the Cloudflare API failed. [code: 10000]",
   }), false);
