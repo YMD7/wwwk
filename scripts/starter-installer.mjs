@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import {
   access,
+  chmod,
   lstat,
   mkdir,
+  mkdtemp,
   readFile,
   readdir,
   realpath,
@@ -11,9 +13,10 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { spawn } from "node:child_process";
+import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import compatibility from "../installer/compatibility.json" with {type: "json"};
@@ -37,9 +40,33 @@ const officialCfosRemotes = new Set([
   "git@github.com:cloudflare/cloudflare-os.git",
   "ssh://git@github.com/cloudflare/cloudflare-os.git",
 ]);
+const temporaryWranglerDirectories = new Set();
+let signalCleanupInstalled = false;
 
 function fail(message) {
   throw new Error(`Starter installer: ${message}`);
+}
+
+function removeTemporaryWranglerDirectorySync(directory) {
+  try {
+    rmSync(directory, {recursive: true, force: true, maxRetries: 2});
+  } catch {
+    // signal終了時の回収はbest-effortとし、通常時はfinallyで失敗を報告する。
+  }
+}
+
+function installSignalCleanup() {
+  if (signalCleanupInstalled) return;
+  signalCleanupInstalled = true;
+  for (const signal of ["SIGINT", "SIGTERM"]) {
+    process.once(signal, () => {
+      for (const directory of temporaryWranglerDirectories) {
+        removeTemporaryWranglerDirectorySync(directory);
+      }
+      temporaryWranglerDirectories.clear();
+      process.exit(signal === "SIGINT" ? 130 : 143);
+    });
+  }
 }
 
 export function run(command, args, options = {}) {
@@ -466,6 +493,110 @@ async function generatedConfigs(integrationPath, cfosRoot, deployment, wwwkWorke
   return {deployment, starter: {...starter, workshop: pair.workshop}, wwwk: pair.wwwk};
 }
 
+function configEntries(configs) {
+  const entries = [
+    ["workshop", configs.starter?.workshop],
+    ["context", configs.starter?.context],
+    ["custom-gatekeeper", configs.starter?.customGatekeeper],
+    ["wwwk", configs.wwwk],
+  ].filter(([, config]) => config !== undefined);
+  if (configs.starter?.errorReporter) {
+    entries.push(["error-reporter", configs.starter.errorReporter]);
+  }
+  return entries;
+}
+
+function configWithAbsolutePaths(config, sourceDirectory) {
+  if (!sourceDirectory) return config;
+  const resolved = structuredClone(config);
+  if (typeof resolved.main === "string" && !isAbsolute(resolved.main)) {
+    resolved.main = resolve(sourceDirectory, resolved.main);
+  }
+  if (typeof resolved.assets?.directory === "string" && !isAbsolute(resolved.assets.directory)) {
+    resolved.assets.directory = resolve(sourceDirectory, resolved.assets.directory);
+  }
+  return resolved;
+}
+
+async function verifyTemporaryWranglerDirectory(directory) {
+  const entry = await lstat(directory);
+  if (!entry.isDirectory() || entry.isSymbolicLink()) {
+    fail("Temporary Wrangler directory must be a real directory.");
+  }
+  if ((entry.mode & 0o777) !== 0o700) {
+    fail("Temporary Wrangler directory must be owner-only (0700).");
+  }
+}
+
+export async function createTemporaryWranglerDirectory(temporaryRoot = tmpdir()) {
+  const root = await canonicalExistingDirectory(temporaryRoot, "Temporary directory");
+  let directory;
+  try {
+    const rootEntry = await lstat(root);
+    if (!rootEntry.isDirectory() || rootEntry.isSymbolicLink()) {
+      fail("Temporary directory must be a real directory.");
+    }
+    directory = await mkdtemp(join(root, "wwwk-wrangler-"));
+    await chmod(directory, 0o700);
+    await verifyTemporaryWranglerDirectory(directory);
+    temporaryWranglerDirectories.add(directory);
+    installSignalCleanup();
+    return directory;
+  } catch (error) {
+    if (directory) await rm(directory, {recursive: true, force: true});
+    throw error;
+  }
+}
+
+export async function writeTemporaryWranglerConfig(directory, name, config, sourceDirectory) {
+  if (!/^[a-z0-9-]+$/.test(name)) fail("Temporary Wrangler config name is invalid.");
+  await verifyTemporaryWranglerDirectory(directory);
+  const configPath = join(directory, `${name}.wrangler.jsonc`);
+  try {
+    await writeFile(configPath, `${JSON.stringify(
+      configWithAbsolutePaths(config, sourceDirectory),
+      null,
+      2,
+    )}\n`, {
+      mode: 0o600,
+      flag: "wx",
+    });
+  } catch (error) {
+    if (error?.code === "EEXIST") {
+      fail("Temporary Wrangler config must not reuse an existing file.");
+    }
+    throw error;
+  }
+  const entry = await lstat(configPath);
+  if (!entry.isFile() || entry.isSymbolicLink() || (entry.mode & 0o777) !== 0o600) {
+    await rm(configPath, {force: true});
+    fail("Temporary Wrangler config must be an owner-only regular file.");
+  }
+  return configPath;
+}
+
+export async function withTemporaryWranglerConfigs(configs, callback, options = {}) {
+  let directory;
+  try {
+    directory = await createTemporaryWranglerDirectory(options.temporaryRoot);
+    const configPaths = {};
+    for (const [name, config] of configEntries(configs)) {
+      configPaths[name] = await writeTemporaryWranglerConfig(
+        directory,
+        name,
+        config,
+        options.sourceDirectories?.[name],
+      );
+    }
+    return await callback({directory, configPaths});
+  } finally {
+    if (directory) {
+      temporaryWranglerDirectories.delete(directory);
+      await rm(directory, {recursive: true, force: true});
+    }
+  }
+}
+
 function generatedPath(directory) {
   return join(directory, ".wwwk-installer.wrangler.jsonc");
 }
@@ -534,7 +665,7 @@ function namedBinding(bindings, name) {
   return matches[0];
 }
 
-export function verifyExistingWorkshopIdentity(version, workshopConfig) {
+export function verifyExistingWorkshopIdentity(version, workshopConfig, wwwkWorkerName) {
   for (const resource of workshopConfig.kv_namespaces ?? []) {
     if (!resource.id) fail(`Existing Workshop requires an explicit ${resource.binding} KV identity.`);
     const actual = namedBinding(resourceBindings(version), resource.binding);
@@ -551,9 +682,10 @@ export function verifyExistingWorkshopIdentity(version, workshopConfig) {
   }
   const wwwk = resourceBindings(version).filter(binding => binding.name === "GATEKEEPER_WWWK");
   if (wwwk.length > 1) fail("Existing Workshop has duplicate GATEKEEPER_WWWK bindings.");
-  if (wwwk.length === 1 && wwwk[0].service !== workshopConfig.services.find(
+  const configuredWwwk = workshopConfig.services.find(
     binding => binding.binding === "GATEKEEPER_WWWK",
-  )?.service) {
+  )?.service;
+  if (wwwk.length === 1 && wwwk[0].service !== (configuredWwwk ?? wwwkWorkerName)) {
     fail("Existing Workshop GATEKEEPER_WWWK binding has a different owner.");
   }
 }
@@ -569,8 +701,19 @@ function latestVersionId(deployments) {
   return versions[0].version_id;
 }
 
-async function wranglerJson(directory, args) {
-  const result = await run("pnpm", ["exec", "wrangler", ...args, "--json"], {cwd: directory});
+export function liveWranglerOptions(directory) {
+  return {cwd: directory, env: {WRANGLER_WRITE_LOGS: "false"}};
+}
+
+async function wranglerJson(directory, args, configPath) {
+  const result = await run("pnpm", [
+    "exec",
+    "wrangler",
+    ...args,
+    "--config",
+    configPath,
+    "--json",
+  ], liveWranglerOptions(directory));
   try {
     return JSON.parse(result.stdout);
   } catch {
@@ -578,26 +721,36 @@ async function wranglerJson(directory, args) {
   }
 }
 
-async function currentWorkerVersion(directory, workerName) {
+async function currentWorkerVersion(directory, workerName, configPath) {
   const versionId = latestVersionId(await wranglerJson(directory, [
     "deployments", "list", "--name", workerName,
-  ]));
+  ], configPath));
   if (!versionId) return undefined;
-  return wranglerJson(directory, ["versions", "view", versionId, "--name", workerName]);
+  return wranglerJson(directory, [
+    "versions",
+    "view",
+    versionId,
+    "--name",
+    workerName,
+  ], configPath);
 }
 
-async function verifyApplyIdentity(configs, cfosRoot) {
+async function verifyApplyIdentity(configs, cfosRoot, configPaths, command) {
   const workshopDirectory = join(cfosRoot, "packages", "workshop-backend");
   const workshop = await currentWorkerVersion(
     workshopDirectory,
     configs.deployment.workers.workshop.name,
+    configPaths.workshop,
   );
   if (!workshop) {
     fail("Baseline Starter deploy is required and must be separately approved.");
   }
-  verifyExistingWorkshopIdentity(workshop, configs.starter.workshop);
+  verifyExistingWorkshopIdentity(workshop, configs.starter.workshop, configs.wwwk.name);
   const wwwkDirectory = join(cfosRoot, "packages", "gatekeeper-wwwk");
-  const wwwk = await currentWorkerVersion(wwwkDirectory, configs.wwwk.name);
+  const wwwk = await currentWorkerVersion(wwwkDirectory, configs.wwwk.name, configPaths.wwwk);
+  if (!wwwk && command === "disconnect") {
+    fail("Existing WWWK Worker cannot be identified for disconnect.");
+  }
   if (wwwk) {
     const bindings = resourceBindings(wwwk);
     for (const name of ["WwwkLibrary", "WwwkGatekeeper"]) {
@@ -607,14 +760,58 @@ async function verifyApplyIdentity(configs, cfosRoot) {
   }
 }
 
-async function deploy(directory) {
-  await run("pnpm", ["exec", "wrangler", "deploy", "--config", generatedPath(directory)], {
-    cwd: directory,
-    stdio: "inherit",
-  });
+async function deploy(directory, configPath) {
+  await run(
+    "pnpm",
+    ["exec", "wrangler", "deploy", "--config", configPath],
+    liveWranglerOptions(directory),
+  );
 }
 
-function printPlan(command) {
+async function confirmLiveDeploy(command, input = process.stdin, output = process.stdout) {
+  if (!input.isTTY || !output.isTTY) {
+    fail("Live deploy requires an interactive confirmation.");
+  }
+  const readline = createInterface({input, output});
+  try {
+    const answer = await readline.question(
+      command === "install"
+        ? "Deploy WWWK, then connect Workshop? [y/N] "
+        : "Disconnect Workshop, then deploy WWWK without its broker? [y/N] ",
+    );
+    if (answer.trim().toLowerCase() !== "y") fail("Live deploy was not confirmed.");
+  } finally {
+    readline.close();
+  }
+}
+
+async function deployLive(configs, cfosRoot, command) {
+  const directories = {
+    workshop: join(cfosRoot, "packages", "workshop-backend"),
+    wwwk: join(cfosRoot, "packages", "gatekeeper-wwwk"),
+  };
+  return withTemporaryWranglerConfigs({
+    starter: {workshop: configs.starter.workshop},
+    wwwk: configs.wwwk,
+  }, async ({configPaths}) => {
+    await verifyApplyIdentity(configs, cfosRoot, configPaths, command);
+    console.log(command === "install"
+      ? "Live deploy plan: WWWK, then Workshop connection."
+      : "Live deploy plan: Workshop disconnect, then WWWK broker removal.");
+    console.log("Cloudflare will receive Worker version updates; no resource is deleted.");
+    console.log("Existing Worker names, Durable Object classes, KV, and R2 identities are verified first.");
+    await confirmLiveDeploy(command);
+    if (command === "install") {
+      await deploy(directories.wwwk, configPaths.wwwk);
+      await deploy(directories.workshop, configPaths.workshop);
+      return;
+    }
+    await deploy(directories.workshop, configPaths.workshop);
+    await deploy(directories.wwwk, configPaths.wwwk);
+  }, {sourceDirectories: directories});
+}
+
+function printPlan(command, apply) {
   const phase = command === "install" ? "connect" : "disconnect";
   console.log(`Starter installer plan (${phase})`);
   console.log("- external deployment config validated without copying its values");
@@ -622,12 +819,16 @@ function printPlan(command) {
   console.log(command === "install"
     ? "- deploy order: WWWK, then Workshop with GATEKEEPER_WWWK"
     : "- deploy order: Workshop without GATEKEEPER_WWWK, then WWWK without broker binding");
-  console.log("- no Cloudflare API read, resource provisioning, or deploy is performed");
+  if (apply) {
+    console.log("- live identity verification and deploy require a later interactive confirmation");
+  } else {
+    console.log("- no Cloudflare API read, resource provisioning, or deploy is performed");
+  }
 }
 
 export async function runStarterInstaller(options) {
-  if (options.apply) {
-    fail("Live deploy is disabled until an in-memory config runner preserves external config privacy.");
+  if (options.apply && (!options.starter || !options.wwwkWorker || !options.stateDir || !options.deploymentConfig)) {
+    fail("Live deploy requires complete parsed installer options.");
   }
   const starterRoot = await verifyStarter(options.starter);
   await verifyWwwkRuntime();
@@ -642,7 +843,7 @@ export async function runStarterInstaller(options) {
   const connected = options.command === "install";
   let directories = [];
   try {
-    await generatedConfigs(
+    const liveConfigs = await generatedConfigs(
       paths.integrationPath,
       cfosRoot,
       deployment,
@@ -660,9 +861,13 @@ export async function runStarterInstaller(options) {
       "wwwk-fixture",
       connected,
     );
-    printPlan(options.command);
+    printPlan(options.command, options.apply);
     directories = await writeGeneratedConfigs(paths.integrationPath, cfosRoot, fixtureConfigs);
     await buildAndDryRun(paths.integrationPath, cfosRoot, directories);
+    if (options.apply) {
+      await deployLive(liveConfigs, cfosRoot, options.command);
+      return {paths, applied: true};
+    }
     return {paths, dryRun: true};
   } finally {
     await removeGeneratedConfigs(directories);

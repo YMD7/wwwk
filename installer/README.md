@@ -30,5 +30,8 @@ Phase 6では、同じ絶対state pathをCFOS runnerから複数Workerの`wrangl
 確認した。Phase 7の`starter-installer.mjs`はStarter checkoutを変更せず、同じ固定tupleを
 integration worktreeへ再現して、接続と接続解除の生成設定、build、Wrangler dry-runを行う。
 外部`deployment.jsonc`はcanonical pathと0600相当を検証してread-onlyで読み、実値を含まない
-tracked fixtureだけをgenerated configへ書く。実値を保持しないlive runnerが未実装のため、
-`--apply`はfail-closedで拒否する。
+tracked fixtureだけをgenerated configへ書く。`--apply`では実値をOSの専用0700 directory内の
+0600一時configへだけ書き、成功・失敗時の`finally`とSIGINT / SIGTERMで回収する。symlinkまたは
+既存fileは再利用せず、repository、integration worktree、managed state、永続・配布・追跡される
+artifact、ログへ実値を残さない。live runnerはWranglerのdisk logも無効化する。強制終了または電源断での
+削除は保証できない。

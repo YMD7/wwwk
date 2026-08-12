@@ -142,8 +142,10 @@ disconnectは管理worktreeだけを外し、stateとWWWK dataを保持する。
 
 **現在の実装:** `pnpm run install:starter` と `pnpm run disconnect:starter` は、固定tupleを
 専用 integration worktreeへ再現し、外部`deployment.jsonc`をread-onlyで検証する。実値を含まない
-fixtureで生成設定、build、Wrangler dry-runを行う。実値をartifactへ書かないlive runnerは未実装の
-ため`--apply`はfail-closedで拒否する。実環境の受入確認は完了条件として残す。
+fixtureで生成設定、build、Wrangler dry-runを行う。`--apply`は実値をOSのowner-only一時configへ
+だけ書き、identity確認とCLIの明示確認後に、接続ではWWWKからWorkshop、接続解除ではWorkshopから
+WWWKの順でdeployする。強制終了または電源断で一時configの削除は保証できない。実環境の受入確認は
+完了条件として残す。
 
 対象外: 公式 hosted deploy、完全消去、自動 upgrade、複数 version 対応、配布 UI。
 

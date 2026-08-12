@@ -28,9 +28,9 @@ installer は checkout 外の state と専用 integration worktree を使い、�
 停止後の再起動、state場所の変更、非破壊 disconnect は
 [Installation](docs/INSTALLATION.md) を参照する。対応する Starter checkout では、同じ方式で
 install / disconnect の build と Wrangler dry-run を実行できる。本番 deploy は `--apply` を
-明示し、対象の Cloudflare 資源を確認した直後の利用者承認を要する。外部 config の実値を
-artifactへ書かない live runner は未実装のため、現在の Starter installer は `--apply` を
-fail-closed で拒否する。bundleを運ぶUI、archive、Linked Sourceのexportはまだ対象外とする。
+明示し、対象の Cloudflare 資源を確認した直後のCLI確認を要する。実値はOSのowner-onlyな
+一時Wrangler configだけへ短時間書き、永続・配布・追跡されるartifactには残さない。bundleを
+運ぶUI、archive、Linked Sourceのexportはまだ対象外とする。
 
 導入契約と現在の実装状況は [Installation](docs/INSTALLATION.md) を参照する。
 
