@@ -30,6 +30,8 @@ const fixtureDeploymentPath = join(
   "fixtures",
   "starter-deployment.jsonc",
 );
+const wwwkClasses = ["WwwkLibrary", "WwwkGatekeeper"];
+const wwwkErasureEntrypoint = "scripts/wwwk-erasure-worker.mjs";
 const officialStarterRemotes = new Set([
   "https://github.com/cloudflare/cloudflare-os-starter.git",
   "git@github.com:cloudflare/cloudflare-os-starter.git",
@@ -156,7 +158,7 @@ function validateWorkerName(value) {
 export function parseArgs(argv) {
   const values = [...argv];
   const options = {command: "install", stateDir: defaultStateDir()};
-  if (values[0] === "disconnect") options.command = values.shift();
+  if (["disconnect", "erase"].includes(values[0])) options.command = values.shift();
   if (values[0] === "--") values.shift();
   while (values.length > 0) {
     const value = values.shift();
@@ -385,7 +387,7 @@ export async function loadExternalDeploymentConfig(configPath, starterRoot, path
 }
 
 function requireExactWwwkExports(config) {
-  for (const name of ["WwwkLibrary", "WwwkGatekeeper"]) {
+  for (const name of wwwkClasses) {
     const entry = config.exports?.[name];
     if (entry?.type !== "durable-object" || entry.storage !== "sqlite" || entry.state) {
       fail(`WWWK ${name} Durable Object identity is invalid.`);
@@ -443,6 +445,23 @@ export function createStarterConfigs({
     : wwwkConfig.services.filter(service => service.binding !== "CFOS_SOURCE_ACCESS_BROKER");
   requireExactWwwkExports(wwwk);
   return {workshop, wwwk};
+}
+
+export function createWwwkErasureConfig({accountId, workerName}) {
+  if (typeof accountId !== "string" || !accountId) fail("Starter account is invalid.");
+  validateWorkerName(workerName);
+  return {
+    account_id: accountId,
+    name: workerName,
+    main: wwwkErasureEntrypoint,
+    compatibility_date: "2026-02-02",
+    compatibility_flags: ["nodejs_compat"],
+    workers_dev: false,
+    exports: Object.fromEntries(wwwkClasses.map(name => [name, {
+      type: "durable-object",
+      state: "deleted",
+    }])),
+  };
 }
 
 async function prepareIntegration(starterRoot, paths) {
@@ -503,6 +522,7 @@ function configEntries(configs) {
   if (configs.starter?.errorReporter) {
     entries.push(["error-reporter", configs.starter.errorReporter]);
   }
+  if (configs.erasure) entries.push(["wwwk-erasure", configs.erasure]);
   return entries;
 }
 
@@ -832,7 +852,7 @@ export function verifyWwwkDurableObjectIdentity(version) {
   if (!exports || typeof exports !== "object" || Array.isArray(exports)) {
     fail("WWWK Worker version does not expose Durable Object exports.");
   }
-  for (const name of ["WwwkLibrary", "WwwkGatekeeper"]) {
+  for (const name of wwwkClasses) {
     const entry = exports[name];
     if (
       !entry ||
@@ -860,6 +880,54 @@ export function verifyWwwkBrokerIdentity(version, workshopWorkerName) {
     brokers[0].environment !== undefined
   ) {
     fail("Existing WWWK CFOS_SOURCE_ACCESS_BROKER identity does not match.");
+  }
+}
+
+function requireNoBinding(version, name, label) {
+  if (resourceBindings(version).some(binding => binding.name === name)) {
+    fail(`${label} must be disconnected before data erasure.`);
+  }
+}
+
+export function verifyWwwkEraseIdentity({
+  workshopVersion,
+  wwwkVersion,
+  workshopConfig,
+  workshopWorkerName,
+  wwwkWorkerName,
+}) {
+  verifyExistingWorkshopIdentity(workshopVersion, workshopConfig, wwwkWorkerName);
+  requireNoBinding(workshopVersion, "GATEKEEPER_WWWK", "Workshop GATEKEEPER_WWWK");
+  verifyWwwkDurableObjectIdentity(wwwkVersion);
+  verifyWwwkBrokerIdentity(wwwkVersion, workshopWorkerName);
+  requireNoBinding(
+    wwwkVersion,
+    "CFOS_SOURCE_ACCESS_BROKER",
+    "WWWK CFOS_SOURCE_ACCESS_BROKER",
+  );
+  if (resourceBindings(wwwkVersion).length !== 0) {
+    fail("WWWK Worker has unexpected resource bindings.");
+  }
+  const exports = wwwkVersion.resources.script_runtime.exports;
+  const durableObjectNames = Object.entries(exports)
+    .filter(([, entry]) => entry?.type === "durable-object")
+    .map(([name]) => name)
+    .sort();
+  if (
+    durableObjectNames.length !== wwwkClasses.length ||
+    durableObjectNames.some((name, index) => name !== [...wwwkClasses].sort()[index])
+  ) {
+    fail("WWWK Worker has unexpected Durable Object exports.");
+  }
+}
+
+export function verifyWwwkDeletionVersion(version) {
+  const exports = version?.resources?.script_runtime?.exports;
+  if (!exports || typeof exports !== "object" || Array.isArray(exports)) {
+    fail("WWWK deletion version does not expose runtime exports.");
+  }
+  if (Object.values(exports).some(entry => entry?.type === "durable-object")) {
+    fail("WWWK deletion version still has a live Durable Object export.");
   }
 }
 
@@ -893,6 +961,14 @@ async function deploy(directory, configPath) {
     "pnpm",
     ["exec", "wrangler", "deploy", "--config", configPath],
     liveWranglerOptions(directory),
+  );
+}
+
+async function deleteWorker(directory, workerName, configPath) {
+  await run(
+    "pnpm",
+    ["exec", "wrangler", "delete", "--name", workerName, "--config", configPath],
+    {...liveWranglerOptions(directory), stdio: "inherit"},
   );
 }
 
@@ -939,7 +1015,114 @@ async function deployLive(configs, cfosRoot, command) {
   }, {sourceDirectories: directories});
 }
 
-function printPlan(command, apply) {
+async function confirmLiveErase(workerName, input = process.stdin, output = process.stdout) {
+  if (!input.isTTY || !output.isTTY) {
+    fail("Data erasure requires an interactive confirmation.");
+  }
+  const expected = `erase ${workerName}`;
+  const readline = createInterface({input, output});
+  try {
+    const answer = await readline.question(`Type \"${expected}\" to continue: `);
+    if (answer.trim() !== expected) fail("Data erasure was not confirmed.");
+  } finally {
+    readline.close();
+  }
+}
+
+async function dryRunWwwkErasure(erasureConfig) {
+  return withTemporaryWranglerConfigs({erasure: erasureConfig}, async ({configPaths}) => {
+    await run(
+      "pnpm",
+      ["exec", "wrangler", "deploy", "--config", configPaths["wwwk-erasure"], "--dry-run"],
+      {cwd: wwwkRoot, stdio: "inherit"},
+    );
+    await run(
+      "pnpm",
+      ["exec", "wrangler", "delete", "--config", configPaths["wwwk-erasure"], "--dry-run"],
+      {cwd: wwwkRoot, stdio: "inherit"},
+    );
+  }, {sourceDirectories: {"wwwk-erasure": wwwkRoot}});
+}
+
+async function eraseLive(configs, cfosRoot) {
+  const directories = {
+    workshop: join(cfosRoot, "packages", "workshop-backend"),
+    wwwk: join(cfosRoot, "packages", "gatekeeper-wwwk"),
+    "wwwk-erasure": wwwkRoot,
+  };
+  return withTemporaryWranglerConfigs({
+    starter: {workshop: configs.starter.workshop},
+    wwwk: configs.wwwk,
+    erasure: configs.erasure,
+  }, async ({configPaths}) => {
+    const verifyLiveIdentity = async () => {
+      const workshopVersion = await currentWorkerVersion(
+        directories.workshop,
+        configs.deployment.workers.workshop.name,
+        configPaths.workshop,
+      );
+      if (!workshopVersion) fail("Baseline Starter deploy cannot be identified.");
+      const wwwkVersion = await currentWorkerVersion(
+        directories.wwwk,
+        configs.wwwk.name,
+        configPaths.wwwk,
+      );
+      if (!wwwkVersion) fail("Existing WWWK Worker cannot be identified for data erasure.");
+      verifyWwwkEraseIdentity({
+        workshopVersion,
+        wwwkVersion,
+        workshopConfig: configs.starter.workshop,
+        workshopWorkerName: configs.deployment.workers.workshop.name,
+        wwwkWorkerName: configs.wwwk.name,
+      });
+    };
+    await verifyLiveIdentity();
+
+    console.log("Live WWWK data erasure plan");
+    console.log("- export is not performed; export required data before continuing");
+    console.log(`- delete Worker: ${configs.wwwk.name}`);
+    for (const className of wwwkClasses) {
+      console.log(`- delete Durable Object namespace: ${configs.wwwk.name}/${className}`);
+    }
+    console.log("- preserve Workshop, other Gatekeepers, KV, and R2");
+    console.log("- Durable Object data deletion is permanent");
+    await confirmLiveErase(configs.wwwk.name);
+
+    await verifyLiveIdentity();
+    await deploy(directories["wwwk-erasure"], configPaths["wwwk-erasure"]);
+    const deletionVersion = await currentWorkerVersion(
+      directories["wwwk-erasure"],
+      configs.wwwk.name,
+      configPaths["wwwk-erasure"],
+    );
+    verifyWwwkDeletionVersion(deletionVersion);
+    await deleteWorker(
+      directories["wwwk-erasure"],
+      configs.wwwk.name,
+      configPaths["wwwk-erasure"],
+    );
+    if (await currentWorkerVersion(
+      directories["wwwk-erasure"],
+      configs.wwwk.name,
+      configPaths["wwwk-erasure"],
+    )) {
+      fail("WWWK Worker still exists after data erasure.");
+    }
+  }, {sourceDirectories: directories});
+}
+
+function printPlan(command, apply, wwwkWorker) {
+  if (command === "erase") {
+    console.log("Starter eraser plan");
+    console.log("- export is not performed; export required data before continuing");
+    console.log(`- target Worker: ${wwwkWorker}`);
+    console.log(`- target Durable Object classes: ${wwwkClasses.join(", ")}`);
+    console.log("- Workshop, other Gatekeepers, KV, and R2 are preserved");
+    console.log(apply
+      ? "- live identity verification and exact interactive confirmation are still required"
+      : "- no Cloudflare API read or resource change is performed");
+    return;
+  }
   const phase = command === "install" ? "connect" : "disconnect";
   console.log(`Starter installer plan (${phase})`);
   console.log("- external deployment config validated without copying its values");
@@ -989,7 +1172,24 @@ export async function runStarterInstaller(options) {
       "wwwk-fixture",
       connected,
     );
-    printPlan(options.command, options.apply);
+    if (options.command === "erase") {
+      liveConfigs.erasure = createWwwkErasureConfig({
+        accountId: deployment.accountId,
+        workerName: options.wwwkWorker,
+      });
+      fixtureConfigs.erasure = createWwwkErasureConfig({
+        accountId: fixtureDeployment.accountId,
+        workerName: "wwwk-fixture",
+      });
+      printPlan(options.command, options.apply, options.wwwkWorker);
+      await dryRunWwwkErasure(fixtureConfigs.erasure);
+      if (options.apply) {
+        await eraseLive(liveConfigs, cfosRoot);
+        return {paths, applied: true};
+      }
+      return {paths, dryRun: true};
+    }
+    printPlan(options.command, options.apply, options.wwwkWorker);
     directories = await writeGeneratedConfigs(paths.integrationPath, cfosRoot, fixtureConfigs);
     await buildAndDryRun(paths.integrationPath, cfosRoot, directories);
     if (options.apply) {

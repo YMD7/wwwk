@@ -203,6 +203,6 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 
 高度な検索、Source 更新の検知、UI、LLM、バックグラウンド処理、Agent Skill の具体的な
 内容と更新などの追加操作 API、複数の CFOS / Starter revision への対応、upgrade 自動化、
-データ完全消去の具体的な手順、Context Library の専用 Adapter、Linked Source の全文出力を
+Context Library の専用 Adapter、Linked Source の全文出力を
 許可する具体的な契約、reference-only bundle の詳細、Owned Source の明示的な共有ポリシー、
 Wiki の直接共有機能は未決定である。必要になるまで選定や雛形作成を行わない。

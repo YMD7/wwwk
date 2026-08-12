@@ -32,6 +32,10 @@ install / disconnect の build と Wrangler dry-run を実行できる。本番 
 一時Wrangler configだけへ短時間書き、永続・配布・追跡されるartifactには残さない。bundleを
 運ぶUI、archive、Linked Sourceのexportはまだ対象外とする。
 
+通常のdisconnectはWWWK dataを保持する。接続解除後にWWWKの2つのDurable Object namespace
+だけを消去する明示的な`erase:local` / `erase:starter`も提供する。既定はplan / dry-runであり、
+実行には`--apply`と完全一致の対話確認が必要である。
+
 導入契約と現在の実装状況は [Installation](docs/INSTALLATION.md) を参照する。
 
 ## 独立性と商標

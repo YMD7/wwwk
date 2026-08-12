@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { access, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+import { createInterface } from "node:readline/promises";
 
 import compatibility from "../installer/compatibility.json" with {type: "json"};
 
@@ -16,6 +17,9 @@ const officialCfosRemotes = new Set([
   "ssh://git@github.com/cloudflare/cloudflare-os.git",
 ]);
 const metadataFile = "local-installer.json";
+const stateLeaseFile = "local-state-lease.json";
+const localWwwkWorker = "gatekeeper-wwwk";
+const localWwwkClasses = ["WwwkLibrary", "WwwkGatekeeper"];
 
 function fail(message) {
   throw new Error(`Local installer: ${message}`);
@@ -105,16 +109,20 @@ function defaultStateDir(environment = process.env) {
 export function parseArgs(argv) {
   const options = {command: "run", stateDir: defaultStateDir()};
   const values = [...argv];
-  if (values[0] === "disconnect") options.command = values.shift();
+  if (["disconnect", "erase"].includes(values[0])) options.command = values.shift();
   if (values[0] === "--") values.shift();
   while (values.length > 0) {
     const value = values.shift();
     if (value === "--cfos") options.cfos = values.shift();
     else if (value === "--state-dir") options.stateDir = values.shift();
     else if (value === "--dry-run") options.dryRun = true;
+    else if (value === "--apply") options.apply = true;
     else fail(`Unknown argument ${value}.`);
   }
   if (!options.cfos || !options.stateDir) fail("--cfos and --state-dir require values.");
+  if (options.apply && options.command !== "erase") {
+    fail("--apply is only valid for data erasure.");
+  }
   return options;
 }
 
@@ -137,6 +145,7 @@ export async function integrationPaths(cfosRoot, stateDir) {
     stateDir: safeStateDir,
     managedRoot,
     metadataPath: join(managedRoot, metadataFile),
+    stateLeasePath: join(managedRoot, stateLeaseFile),
     integrationPath,
   };
 }
@@ -220,6 +229,125 @@ async function registeredWorktrees(cfosRoot) {
   return output.split("\n")
     .filter(line => line.startsWith("worktree "))
     .map(line => line.slice("worktree ".length));
+}
+
+export function assertLocalStateUnused(paths) {
+  if (existsSync(paths.stateLeasePath)) fail("Local state lease already exists.");
+}
+
+export async function withLocalStateLease(paths, operation, callback) {
+  if (!["run", "disconnect", "erase"].includes(operation)) {
+    fail("Local state operation is invalid.");
+  }
+  try {
+    await writeFile(
+      paths.stateLeasePath,
+      `${JSON.stringify({format: 1, operation, pid: process.pid})}\n`,
+      {mode: 0o600, flag: "wx"},
+    );
+  } catch (error) {
+    if (error?.code === "EEXIST") fail("Local state lease already exists.");
+    throw error;
+  }
+  try {
+    return await callback();
+  } finally {
+    await rm(paths.stateLeasePath, {force: true});
+  }
+}
+
+async function assertLocalDisconnected(cfosRoot, paths) {
+  if (
+    existsSync(paths.integrationPath) ||
+    (await registeredWorktrees(cfosRoot)).includes(paths.integrationPath)
+  ) {
+    fail("Disconnect WWWK and stop local CFOS before data erasure.");
+  }
+}
+
+export function localWwwkNamespacePaths(stateDir) {
+  // 対応対象のWrangler 4.119.0では、DO namespace keyはWorker名とclass名から決まる。
+  const root = resolve(stateDir, "v3", "do");
+  return localWwwkClasses.map(className =>
+    join(root, `${localWwwkWorker}-${className}`));
+}
+
+async function realDirectoryOrAbsent(path, label) {
+  let entry;
+  try {
+    entry = await lstat(path);
+  } catch (error) {
+    if (error?.code === "ENOENT") return false;
+    throw error;
+  }
+  if (!entry.isDirectory() || entry.isSymbolicLink()) {
+    fail(`${label} must be a real directory.`);
+  }
+  return true;
+}
+
+export async function removeLocalWwwkData(stateDir) {
+  const root = requireSafeDirectory(
+    await canonicalExistingDirectory(stateDir, "State directory"),
+    "State directory",
+  );
+  const versionRoot = join(root, "v3");
+  const durableObjectRoot = join(versionRoot, "do");
+  if (!await realDirectoryOrAbsent(versionRoot, "Wrangler v3 state")) return [];
+  if (!await realDirectoryOrAbsent(durableObjectRoot, "Durable Object state")) return [];
+
+  const removed = [];
+  for (const target of localWwwkNamespacePaths(root)) {
+    if (!isWithin(target, durableObjectRoot)) fail("Local WWWK namespace is outside state.");
+    if (!await realDirectoryOrAbsent(target, "Local WWWK namespace")) continue;
+    await rm(target, {recursive: true});
+    removed.push(target);
+  }
+  return removed;
+}
+
+async function confirmLocalErase(input = process.stdin, output = process.stdout) {
+  if (!input.isTTY || !output.isTTY) {
+    fail("Data erasure requires an interactive confirmation.");
+  }
+  const expected = "erase local WWWK";
+  const readline = createInterface({input, output});
+  try {
+    const answer = await readline.question(`Type \"${expected}\" to continue: `);
+    if (answer.trim() !== expected) fail("Data erasure was not confirmed.");
+  } finally {
+    readline.close();
+  }
+}
+
+function printLocalErasePlan(paths) {
+  console.log("Local WWWK data erasure plan");
+  console.log("- export is not performed; export required data before continuing");
+  console.log("- all local CFOS processes must be stopped");
+  for (const target of localWwwkNamespacePaths(paths.stateDir)) {
+    console.log(`- delete Durable Object namespace: ${target}`);
+  }
+  console.log("- preserve CFOS, other Gatekeepers, KV, R2, and the rest of local state");
+  console.log("- deleted SQLite data cannot be recovered by WWWK");
+}
+
+export async function eraseLocal({cfos, stateDir, dryRun = false, apply = false}) {
+  const cfosRoot = await verifyCfos(cfos);
+  const paths = await integrationPaths(cfosRoot, stateDir);
+  const metadata = await loadMetadata(paths.metadataPath);
+  if (!matchesMetadata(metadata, expectedMetadata(cfosRoot, paths))) {
+    fail("Managed state ownership cannot be verified.");
+  }
+  assertLocalStateUnused(paths);
+  await assertLocalDisconnected(cfosRoot, paths);
+  printLocalErasePlan(paths);
+  if (dryRun || !apply) return {cfosRoot, paths, dryRun: true};
+  await confirmLocalErase();
+  const removed = await withLocalStateLease(paths, "erase", async () => {
+    await assertLocalDisconnected(cfosRoot, paths);
+    return removeLocalWwwkData(paths.stateDir);
+  });
+  return {cfosRoot, paths, applied: true, removed};
 }
 
 async function removeManagedWorktree(cfosRoot, paths) {
@@ -319,20 +447,25 @@ export async function disconnectLocal({cfos, stateDir, dryRun = false}) {
   if (!matchesMetadata(metadata, expectedMetadata(cfosRoot, paths))) {
     fail("Managed state ownership cannot be verified.");
   }
-  if (!dryRun) await removeManagedWorktree(cfosRoot, paths);
-  return {cfosRoot, paths, dryRun};
+  return withLocalStateLease(paths, "disconnect", async () => {
+    if (!dryRun) await removeManagedWorktree(cfosRoot, paths);
+    return {cfosRoot, paths, dryRun};
+  });
 }
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const result = options.command === "disconnect"
     ? await disconnectLocal(options)
-    : await prepareIntegration(options);
-  if (result.dryRun || options.command === "disconnect") return;
-  await run("pnpm", ["run", "dev-server", "--", "--persist-to", result.paths.stateDir], {
-    cwd: result.paths.integrationPath,
-    stdio: "inherit",
-  });
+    : options.command === "erase"
+      ? await eraseLocal(options)
+      : await prepareIntegration(options);
+  if (result.dryRun || options.command !== "run") return;
+  await withLocalStateLease(result.paths, "run", () =>
+    run("pnpm", ["run", "dev-server", "--", "--persist-to", result.paths.stateDir], {
+      cwd: result.paths.integrationPath,
+      stdio: "inherit",
+    }));
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
