@@ -448,12 +448,14 @@ test("accepts live service bindings without config-only props", () => {
       type: "service",
       service: "context",
       entrypoint: "GatekeeperVendor",
+      environment: "production",
     },
     {
       name: "GATEKEEPER_CUSTOM",
       type: "service",
       service: "custom",
       entrypoint: "GatekeeperVendor",
+      environment: "production",
     },
     {name: "BLUEPRINTS", type: "kv_namespace", namespace_id: "kv-1"},
     {name: "BLUEPRINT_CONTENT", type: "r2_bucket", bucket_name: "bucket-1"},
@@ -528,6 +530,12 @@ test("rejects changed access variables and service identities before live deploy
     () => verifyExistingWorkshopIdentity(version, workshopConfig),
     /service identity does not match/,
   );
+  version.resources.bindings[4].service = "custom";
+  version.resources.bindings[4].environment = "staging";
+  assert.throws(
+    () => verifyExistingWorkshopIdentity(version, workshopConfig),
+    /service identity does not match/,
+  );
 });
 
 test("rejects changed Workshop Durable Object exports before live deploy", () => {
@@ -597,6 +605,7 @@ test("accepts an absent WWWK broker and rejects unsafe broker identities", () =>
     type: "service",
     service: "workshop",
     entrypoint: "SourceAccessBroker",
+    environment: "production",
   };
   version.resources.bindings.push(broker);
   assert.doesNotThrow(() => verifyWwwkBrokerIdentity(version, "workshop"));
@@ -743,6 +752,7 @@ test("accepts only the selected WWWK binding while preparing disconnect", () => 
       type: "service",
       service: "wwwk",
       entrypoint: "GatekeeperVendor",
+      environment: "production",
     },
   ]}};
   assert.doesNotThrow(() => verifyExistingWorkshopIdentity(version, disconnected, "wwwk"));
