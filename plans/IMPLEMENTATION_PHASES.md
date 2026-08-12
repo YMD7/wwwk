@@ -147,6 +147,10 @@ fixtureで生成設定、build、Wrangler dry-runを行う。`--apply`は実値�
 WWWKの順でdeployする。強制終了または電源断で一時configの削除は保証できない。実環境の受入確認は
 完了条件として残す。
 
+新規環境の前提となる基底deploymentには`bootstrap:starter`を追加した。すべての対象Worker名が
+未使用の場合だけ、owner-only一時configと完全一致の対話確認を使い、公式Starterと同じ順序で
+deployする。WWWKのdeployと接続、実環境の受入確認はこの操作に含めない。
+
 対象外: 公式 hosted deploy、完全消去、自動 upgrade、複数 version 対応、配布 UI。
 
 ## Phase 8: WWWK データの完全消去

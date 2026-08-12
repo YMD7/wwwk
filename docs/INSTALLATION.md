@@ -194,6 +194,20 @@ state、ログ、PRへ書かず、dry-runには追跡されたfixtureだけを�
 
 新規 Starter は先に基底deploymentを別の明示承認で完了している必要がある。
 
+基底deploymentがない新規環境では、同じ外部configと固定tupleからplan / dry-runを実行する。
+
+```sh
+pnpm run bootstrap:starter -- \
+  --starter "$STARTER_ROOT" \
+  --wwwk-worker "$WWWK_WORKER" \
+  --deployment-config "$DEPLOYMENT_CONFIG"
+```
+
+`--apply`を付けた場合も、すべての対象Worker名が未使用であることをlive確認し、Workshop名を
+含む完全一致の対話確認後にだけError Reporter、Context、Custom Gatekeeper、Workshopの順で
+deployする。Wranglerはconfigに応じてKV / R2を自動作成できる。実値は既存live runnerと同じ
+owner-only一時configだけに置く。この操作はWWWKをdeployまたは接続しない。
+
 ## アンインストール
 
 アンインストールは接続解除とデータ消去を分離する。

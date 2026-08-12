@@ -30,6 +30,7 @@ import {
   verifyWwwkDeletionVersion,
   verifyWwwkDurableObjectIdentity,
   verifyWwwkEraseIdentity,
+  validateWwwkWorkerName,
   withTemporaryWranglerConfigs,
   workshopFrontendBuildOptions,
   writeTemporaryWranglerConfig,
@@ -87,7 +88,7 @@ function temporaryConfigs(value) {
   };
 }
 
-test("parses Starter install, disconnect, and data erasure commands", () => {
+test("parses Starter bootstrap, install, disconnect, and data erasure commands", () => {
   assert.deepEqual(parseArgs([
     "--starter", "/tmp/starter",
     "--wwwk-worker", "my-wwwk",
@@ -100,6 +101,13 @@ test("parses Starter install, disconnect, and data erasure commands", () => {
     stateDir: "/tmp/state",
     deploymentConfig: "/tmp/deployment.jsonc",
   });
+  assert.equal(parseArgs([
+    "bootstrap",
+    "--starter", "/tmp/starter",
+    "--wwwk-worker", "my-wwwk",
+    "--state-dir", "/tmp/state",
+    "--deployment-config", "/tmp/deployment.jsonc",
+  ]).command, "bootstrap");
   assert.equal(parseArgs([
     "disconnect",
     "--starter", "/tmp/starter",
@@ -333,6 +341,19 @@ test("creates reciprocal bindings while preserving SQLite Durable Object exports
   }]);
   assert.deepEqual(connected.wwwk.exports, wwwkConfig.exports);
   assert.equal(workshopConfig.services.length, 2);
+});
+
+test("requires a dedicated WWWK Worker name", () => {
+  const deployment = {workers: {
+    workshop: {name: "workshop"},
+    context: {name: "context"},
+    customGatekeeper: {name: "custom"},
+  }};
+  assert.doesNotThrow(() => validateWwwkWorkerName(deployment, "wwwk"));
+  assert.throws(
+    () => validateWwwkWorkerName(deployment, "context"),
+    /must differ from every Starter Worker/,
+  );
 });
 
 test("disconnect removes only the reciprocal service bindings", () => {

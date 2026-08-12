@@ -158,7 +158,9 @@ function validateWorkerName(value) {
 export function parseArgs(argv) {
   const values = [...argv];
   const options = {command: "install", stateDir: defaultStateDir()};
-  if (["disconnect", "erase"].includes(values[0])) options.command = values.shift();
+  if (["bootstrap", "disconnect", "erase"].includes(values[0])) {
+    options.command = values.shift();
+  }
   if (values[0] === "--") values.shift();
   while (values.length > 0) {
     const value = values.shift();
@@ -493,6 +495,7 @@ async function prepareIntegration(starterRoot, paths) {
 async function generatedConfigs(integrationPath, cfosRoot, deployment, wwwkWorker, connected) {
   const deploy = await import(pathToFileURL(join(integrationPath, "scripts", "deploy.mjs")).href);
   deploy.validateConfig(deployment);
+  validateWwwkWorkerName(deployment, wwwkWorker);
   const bases = {
     workshop: await readJsonc(join(cfosRoot, "packages", "workshop-backend", "wrangler.jsonc")),
     context: await readJsonc(join(cfosRoot, "packages", "gatekeeper-context", "wrangler.jsonc")),
@@ -510,6 +513,12 @@ async function generatedConfigs(integrationPath, cfosRoot, deployment, wwwkWorke
     connected,
   });
   return {deployment, starter: {...starter, workshop: pair.workshop}, wwwk: pair.wwwk};
+}
+
+export function validateWwwkWorkerName(deployment, wwwkWorker) {
+  if (Object.values(deployment.workers).some(worker => worker?.name === wwwkWorker)) {
+    fail("WWWK Worker name must differ from every Starter Worker name.");
+  }
 }
 
 function configEntries(configs) {
@@ -989,6 +998,65 @@ async function confirmLiveDeploy(command, input = process.stdin, output = proces
   }
 }
 
+async function confirmStarterBootstrap(workerName, input = process.stdin, output = process.stdout) {
+  if (!input.isTTY || !output.isTTY) {
+    fail("Starter bootstrap requires an interactive confirmation.");
+  }
+  const expected = `bootstrap ${workerName}`;
+  const readline = createInterface({input, output});
+  try {
+    const answer = await readline.question(`Type \"${expected}\" to continue: `);
+    if (answer.trim() !== expected) fail("Starter bootstrap was not confirmed.");
+  } finally {
+    readline.close();
+  }
+}
+
+async function deployStarterBootstrap(configs, cfosRoot) {
+  const targets = [
+    ["error-reporter", configs.starter.errorReporter,
+      join(configs.integrationPath, "packages", "error-reporter")],
+    ["context", configs.starter.context,
+      join(cfosRoot, "packages", "gatekeeper-context")],
+    ["custom-gatekeeper", configs.starter.customGatekeeper,
+      join(configs.integrationPath, "packages", "custom-gatekeeper")],
+    ["workshop", configs.starter.workshop,
+      join(cfosRoot, "packages", "workshop-backend")],
+  ].filter(([, config]) => config !== undefined);
+  const directories = Object.fromEntries(targets.map(([name, , directory]) =>
+    [name, directory]));
+  return withTemporaryWranglerConfigs({starter: configs.starter}, async ({configPaths}) => {
+    const verifyTargetsAbsent = async () => {
+      for (const [name, config, directory] of targets) {
+        if (await currentWorkerVersion(directory, config.name, configPaths[name])) {
+          fail(`Starter bootstrap target ${name} Worker already exists.`);
+        }
+      }
+      if (await currentWorkerVersion(
+        cfosRoot,
+        configs.wwwk.name,
+        configPaths.workshop,
+      )) {
+        fail("Starter bootstrap WWWK Worker name is already in use.");
+      }
+    };
+    await verifyTargetsAbsent();
+
+    console.log("Starter baseline bootstrap plan");
+    for (const [name, config] of targets) {
+      console.log(`- create ${name} Worker: ${config.name}`);
+    }
+    console.log("- Wrangler may provision configured KV namespaces and R2 bucket");
+    console.log("- WWWK is not deployed or connected by this operation");
+    await confirmStarterBootstrap(configs.starter.workshop.name);
+    await verifyTargetsAbsent();
+
+    for (const [name, , directory] of targets) {
+      await deploy(directory, configPaths[name]);
+    }
+  }, {sourceDirectories: directories});
+}
+
 async function deployLive(configs, cfosRoot, command) {
   const directories = {
     workshop: join(cfosRoot, "packages", "workshop-backend"),
@@ -1112,6 +1180,17 @@ async function eraseLive(configs, cfosRoot) {
 }
 
 function printPlan(command, apply, wwwkWorker) {
+  if (command === "bootstrap") {
+    console.log("Starter baseline bootstrap plan");
+    console.log("- tracked fixture values are used for build and Wrangler dry-run");
+    console.log("- live mode requires every target Worker name to be unused");
+    console.log("- live values stay in owner-only temporary Wrangler configs");
+    console.log("- WWWK is not deployed or connected");
+    console.log(apply
+      ? "- target names and exact interactive confirmation are still required"
+      : "- no Cloudflare API read, resource provisioning, or deploy is performed");
+    return;
+  }
   if (command === "erase") {
     console.log("Starter eraser plan");
     console.log("- export is not performed; export required data before continuing");
@@ -1193,6 +1272,10 @@ export async function runStarterInstaller(options) {
     directories = await writeGeneratedConfigs(paths.integrationPath, cfosRoot, fixtureConfigs);
     await buildAndDryRun(paths.integrationPath, cfosRoot, directories);
     if (options.apply) {
+      if (options.command === "bootstrap") {
+        await deployStarterBootstrap({...liveConfigs, integrationPath: paths.integrationPath}, cfosRoot);
+        return {paths, applied: true};
+      }
       await deployLive(liveConfigs, cfosRoot, options.command);
       return {paths, applied: true};
     }
