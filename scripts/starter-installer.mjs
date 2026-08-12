@@ -697,7 +697,6 @@ function verifyWorkshopServices(bindings, workshopConfig) {
       actual.type !== "service" ||
       actual.service !== expected.service ||
       actual.entrypoint !== expected.entrypoint ||
-      !matchesJson(actual.props, expected.props) ||
       actual.environment !== expected.environment
     ) {
       fail(`Existing Workshop ${expected.binding} service identity does not match.`);
@@ -812,6 +811,21 @@ export function verifyWwwkDurableObjectIdentity(version) {
   }
 }
 
+export function verifyWwwkBrokerIdentity(version, workshopWorkerName) {
+  const brokers = resourceBindings(version).filter(
+    binding => binding.name === "CFOS_SOURCE_ACCESS_BROKER",
+  );
+  if (brokers.length === 0) return;
+  if (
+    brokers.length !== 1 ||
+    brokers[0].type !== "service" ||
+    brokers[0].service !== workshopWorkerName ||
+    brokers[0].entrypoint !== "SourceAccessBroker"
+  ) {
+    fail("Existing WWWK CFOS_SOURCE_ACCESS_BROKER identity does not match.");
+  }
+}
+
 async function verifyApplyIdentity(configs, cfosRoot, configPaths, command) {
   const workshopDirectory = join(cfosRoot, "packages", "workshop-backend");
   const workshop = await currentWorkerVersion(
@@ -830,6 +844,10 @@ async function verifyApplyIdentity(configs, cfosRoot, configPaths, command) {
   }
   if (wwwk) {
     verifyWwwkDurableObjectIdentity(wwwk);
+    verifyWwwkBrokerIdentity(
+      wwwk,
+      configs.deployment.workers.workshop.name,
+    );
   }
 }
 

@@ -24,6 +24,7 @@ import {
   run,
   runStarterInstaller,
   verifyExistingWorkshopIdentity,
+  verifyWwwkBrokerIdentity,
   verifyWwwkDurableObjectIdentity,
   withTemporaryWranglerConfigs,
   workshopFrontendBuildOptions,
@@ -357,7 +358,7 @@ test("rejects invalid Durable Object identity and conflicting Workshop bindings"
   }), /already contains/);
 });
 
-test("requires explicit existing resource identities before apply", () => {
+test("accepts live service bindings without config-only props", () => {
   const connected = createStarterConfigs({
     workshopConfig,
     wwwkConfig,
@@ -377,7 +378,6 @@ test("requires explicit existing resource identities before apply", () => {
       type: "service",
       service: "context",
       entrypoint: "GatekeeperVendor",
-      props: {sharingDomain: "example"},
     },
     {
       name: "GATEKEEPER_CUSTOM",
@@ -421,7 +421,6 @@ test("rejects changed access variables and service identities before live deploy
       type: "service",
       service: "context",
       entrypoint: "GatekeeperVendor",
-      props: {sharingDomain: "example"},
     },
     {
       name: "GATEKEEPER_CUSTOM",
@@ -464,6 +463,41 @@ test("verifies WWWK SQLite Durable Object exports from the live version", () => 
   assert.throws(() => verifyWwwkDurableObjectIdentity(version), /does not expose/);
 });
 
+test("accepts an absent WWWK broker and rejects unsafe broker identities", () => {
+  const version = {resources: {bindings: []}};
+  assert.doesNotThrow(() => verifyWwwkBrokerIdentity(version, "workshop"));
+  const broker = {
+    name: "CFOS_SOURCE_ACCESS_BROKER",
+    type: "service",
+    service: "workshop",
+    entrypoint: "SourceAccessBroker",
+  };
+  version.resources.bindings.push(broker);
+  assert.doesNotThrow(() => verifyWwwkBrokerIdentity(version, "workshop"));
+  delete broker.service;
+  assert.throws(
+    () => verifyWwwkBrokerIdentity(version, "workshop"),
+    /CFOS_SOURCE_ACCESS_BROKER identity/,
+  );
+  broker.service = "other";
+  assert.throws(
+    () => verifyWwwkBrokerIdentity(version, "workshop"),
+    /CFOS_SOURCE_ACCESS_BROKER identity/,
+  );
+  broker.service = "workshop";
+  broker.entrypoint = "OtherEntrypoint";
+  assert.throws(
+    () => verifyWwwkBrokerIdentity(version, "workshop"),
+    /CFOS_SOURCE_ACCESS_BROKER identity/,
+  );
+  broker.entrypoint = "SourceAccessBroker";
+  version.resources.bindings.push({...broker});
+  assert.throws(
+    () => verifyWwwkBrokerIdentity(version, "workshop"),
+    /CFOS_SOURCE_ACCESS_BROKER identity/,
+  );
+});
+
 test("accepts only the selected WWWK binding while preparing disconnect", () => {
   const disconnected = createStarterConfigs({
     workshopConfig,
@@ -482,7 +516,6 @@ test("accepts only the selected WWWK binding while preparing disconnect", () => 
       type: "service",
       service: "context",
       entrypoint: "GatekeeperVendor",
-      props: {sharingDomain: "example"},
     },
     {
       name: "GATEKEEPER_CUSTOM",
