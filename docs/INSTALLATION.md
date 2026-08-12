@@ -237,7 +237,9 @@ pnpm run erase:local -- \
 CFOS、ほかの Gatekeeper、KV、R2、管理metadata、`v3` state全体は保持する。対象または親が
 symbolic linkの場合は削除せず停止する。local runnerとeraseはmanaged stateのowner-onlyな
 PID leaseを排他的に取得し、同じstateを別processが使用中の場合も削除せず停止する。eraseは
-lease取得後にdisconnect状態を再検証してから削除する。
+lease取得後にdisconnect状態を再検証してから削除する。強制終了や電源断で
+`local-state-lease.json`が残った場合は自動回収しない。すべてのlocal processが停止したことを
+確認してから、managed state内のこのfileだけを手動で削除する。
 
 Cloudflareでは、`disconnect:starter --apply`を完了した後に計画とWrangler dry-runを確認する。
 

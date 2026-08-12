@@ -17,7 +17,7 @@ const officialCfosRemotes = new Set([
   "ssh://git@github.com/cloudflare/cloudflare-os.git",
 ]);
 const metadataFile = "local-installer.json";
-const runnerFile = "local-runner.json";
+const stateLeaseFile = "local-state-lease.json";
 const localWwwkWorker = "gatekeeper-wwwk";
 const localWwwkClasses = ["WwwkLibrary", "WwwkGatekeeper"];
 
@@ -145,7 +145,7 @@ export async function integrationPaths(cfosRoot, stateDir) {
     stateDir: safeStateDir,
     managedRoot,
     metadataPath: join(managedRoot, metadataFile),
-    runnerPath: join(managedRoot, runnerFile),
+    stateLeasePath: join(managedRoot, stateLeaseFile),
     integrationPath,
   };
 }
@@ -231,68 +231,28 @@ async function registeredWorktrees(cfosRoot) {
     .map(line => line.slice("worktree ".length));
 }
 
-async function loadStateLease(path) {
-  if (!existsSync(path)) return undefined;
-  const entry = await lstat(path);
-  if (!entry.isFile() || entry.isSymbolicLink() || (entry.mode & 0o077) !== 0) {
-    fail("Local runner marker is not an owner-only regular file.");
-  }
-  let marker;
-  try {
-    marker = JSON.parse(await readFile(path, "utf8"));
-  } catch {
-    fail("Local runner marker is invalid.");
-  }
-  if (
-    marker?.format !== 1 ||
-    !["run", "erase"].includes(marker.operation) ||
-    !Number.isSafeInteger(marker.pid) ||
-    marker.pid <= 0
-  ) {
-    fail("Local runner marker is invalid.");
-  }
-  return marker;
-}
-
-export function isProcessAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    if (error?.code === "ESRCH") return false;
-    if (error?.code === "EPERM") return true;
-    throw error;
-  }
-}
-
-export async function assertLocalRunnerStopped(paths) {
-  const lease = await loadStateLease(paths.runnerPath);
-  if (lease !== undefined && isProcessAlive(lease.pid)) {
-    fail("Local state is already in use.");
-  }
+export function assertLocalStateUnused(paths) {
+  if (existsSync(paths.stateLeasePath)) fail("Local state lease already exists.");
 }
 
 export async function withLocalStateLease(paths, operation, callback) {
-  if (!["run", "erase"].includes(operation)) fail("Local state operation is invalid.");
-  const staleLease = await loadStateLease(paths.runnerPath);
-  if (staleLease !== undefined) {
-    if (isProcessAlive(staleLease.pid)) fail("Local state is already in use.");
-    await rm(paths.runnerPath);
+  if (!["run", "disconnect", "erase"].includes(operation)) {
+    fail("Local state operation is invalid.");
   }
   try {
     await writeFile(
-      paths.runnerPath,
+      paths.stateLeasePath,
       `${JSON.stringify({format: 1, operation, pid: process.pid})}\n`,
       {mode: 0o600, flag: "wx"},
     );
   } catch (error) {
-    if (error?.code === "EEXIST") fail("Local state is already in use.");
+    if (error?.code === "EEXIST") fail("Local state lease already exists.");
     throw error;
   }
   try {
     return await callback();
   } finally {
-    await rm(paths.runnerPath, {force: true});
+    await rm(paths.stateLeasePath, {force: true});
   }
 }
 
@@ -378,7 +338,7 @@ export async function eraseLocal({cfos, stateDir, dryRun = false, apply = false}
   if (!matchesMetadata(metadata, expectedMetadata(cfosRoot, paths))) {
     fail("Managed state ownership cannot be verified.");
   }
-  await assertLocalRunnerStopped(paths);
+  assertLocalStateUnused(paths);
   await assertLocalDisconnected(cfosRoot, paths);
   printLocalErasePlan(paths);
   if (dryRun || !apply) return {cfosRoot, paths, dryRun: true};
@@ -487,9 +447,10 @@ export async function disconnectLocal({cfos, stateDir, dryRun = false}) {
   if (!matchesMetadata(metadata, expectedMetadata(cfosRoot, paths))) {
     fail("Managed state ownership cannot be verified.");
   }
-  await assertLocalRunnerStopped(paths);
-  if (!dryRun) await removeManagedWorktree(cfosRoot, paths);
-  return {cfosRoot, paths, dryRun};
+  return withLocalStateLease(paths, "disconnect", async () => {
+    if (!dryRun) await removeManagedWorktree(cfosRoot, paths);
+    return {cfosRoot, paths, dryRun};
+  });
 }
 
 async function main() {

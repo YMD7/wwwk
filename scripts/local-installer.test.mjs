@@ -6,8 +6,7 @@ import { join } from "node:path";
 
 import {
   integrationPaths,
-  assertLocalRunnerStopped,
-  isProcessAlive,
+  assertLocalStateUnused,
   withLocalStateLease,
   localWwwkNamespacePaths,
   parseArgs,
@@ -137,7 +136,7 @@ test("rejects symlinked local WWWK namespace state", async t => {
 test("rejects data erasure while the managed local runner is alive", async t => {
   const root = await mkdtemp(join(tmpdir(), "wwwk-local-runner-"));
   t.after(() => rm(root, {recursive: true, force: true}));
-  const marker = join(root, "local-runner.json");
+  const marker = join(root, "local-state-lease.json");
   await writeFile(marker, `${JSON.stringify({
     format: 1,
     operation: "run",
@@ -146,17 +145,16 @@ test("rejects data erasure while the managed local runner is alive", async t => 
     mode: 0o600,
   });
 
-  assert.equal(isProcessAlive(process.pid), true);
-  await assert.rejects(
-    assertLocalRunnerStopped({runnerPath: marker}),
-    /already in use/,
+  assert.throws(
+    () => assertLocalStateUnused({stateLeasePath: marker}),
+    /lease already exists/,
   );
 });
 
-test("accepts a stale owner-only local runner marker", async t => {
+test("fails closed without removing a stale local state lease", async t => {
   const root = await mkdtemp(join(tmpdir(), "wwwk-local-runner-"));
   t.after(() => rm(root, {recursive: true, force: true}));
-  const marker = join(root, "local-runner.json");
+  const marker = join(root, "local-state-lease.json");
   await writeFile(marker, `${JSON.stringify({
     format: 1,
     operation: "run",
@@ -165,19 +163,23 @@ test("accepts a stale owner-only local runner marker", async t => {
     mode: 0o600,
   });
 
-  await assert.doesNotReject(assertLocalRunnerStopped({runnerPath: marker}));
+  await assert.rejects(
+    withLocalStateLease({stateLeasePath: marker}, "erase", async () => {}),
+    /lease already exists/,
+  );
+  await assert.doesNotReject(lstat(marker));
 });
 
 test("serializes local run and data erasure with one state lease", async t => {
   const root = await mkdtemp(join(tmpdir(), "wwwk-local-runner-"));
   t.after(() => rm(root, {recursive: true, force: true}));
-  const paths = {runnerPath: join(root, "local-runner.json")};
+  const paths = {stateLeasePath: join(root, "local-state-lease.json")};
 
   await withLocalStateLease(paths, "erase", async () => {
     await assert.rejects(
       withLocalStateLease(paths, "run", async () => {}),
-      /already in use/,
+      /lease already exists/,
     );
   });
-  await assert.rejects(lstat(paths.runnerPath), /ENOENT/);
+  await assert.rejects(lstat(paths.stateLeasePath), /ENOENT/);
 });
