@@ -708,6 +708,10 @@ function namedBinding(bindings, name) {
   return matches[0];
 }
 
+function serviceEnvironment(binding) {
+  return binding.environment === undefined ? "production" : binding.environment;
+}
+
 function matchesJson(left, right) {
   if (left === right) return true;
   if (!left || !right || typeof left !== "object" || typeof right !== "object") return false;
@@ -740,7 +744,7 @@ function verifyWorkshopServices(bindings, workshopConfig) {
       actual.type !== "service" ||
       actual.service !== expected.service ||
       actual.entrypoint !== expected.entrypoint ||
-      actual.environment !== expected.environment
+      serviceEnvironment(actual) !== serviceEnvironment(expected)
     ) {
       fail(`Existing Workshop ${expected.binding} service identity does not match.`);
     }
@@ -806,7 +810,7 @@ export function verifyExistingWorkshopIdentity(version, workshopConfig, wwwkWork
       wwwk[0].type !== "service" ||
       wwwk[0].service !== (configuredWwwk ?? wwwkWorkerName) ||
       wwwk[0].entrypoint !== "GatekeeperVendor" ||
-      wwwk[0].environment !== undefined
+      serviceEnvironment(wwwk[0]) !== "production"
     )
   ) {
     fail("Existing Workshop GATEKEEPER_WWWK binding identity does not match.");
@@ -917,7 +921,7 @@ export function verifyWwwkBrokerIdentity(version, workshopWorkerName) {
     brokers[0].type !== "service" ||
     brokers[0].service !== workshopWorkerName ||
     brokers[0].entrypoint !== "SourceAccessBroker" ||
-    brokers[0].environment !== undefined
+    serviceEnvironment(brokers[0]) !== "production"
   ) {
     fail("Existing WWWK CFOS_SOURCE_ACCESS_BROKER identity does not match.");
   }
