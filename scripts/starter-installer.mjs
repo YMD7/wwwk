@@ -704,10 +704,35 @@ function verifyWorkshopServices(bindings, workshopConfig) {
   }
 }
 
+function verifyWorkshopDurableObjects(version, workshopConfig) {
+  const expectedClasses = (workshopConfig.migrations ?? []).flatMap(
+    migration => migration.new_sqlite_classes ?? [],
+  );
+  if (expectedClasses.length === 0) return;
+  const exports = version?.resources?.script_runtime?.exports;
+  if (!exports || typeof exports !== "object" || Array.isArray(exports)) {
+    fail("Workshop Worker version does not expose Durable Object exports.");
+  }
+  for (const name of expectedClasses) {
+    const entry = exports[name];
+    if (
+      !entry ||
+      typeof entry !== "object" ||
+      Array.isArray(entry) ||
+      entry.type !== "durable-object" ||
+      entry.storage !== "sqlite" ||
+      (entry.state !== undefined && entry.state !== "created")
+    ) {
+      fail(`Existing Workshop ${name} Durable Object export identity does not match.`);
+    }
+  }
+}
+
 export function verifyExistingWorkshopIdentity(version, workshopConfig, wwwkWorkerName) {
   const bindings = resourceBindings(version);
   verifyWorkshopVars(bindings, workshopConfig);
   verifyWorkshopServices(bindings, workshopConfig);
+  verifyWorkshopDurableObjects(version, workshopConfig);
   for (const resource of workshopConfig.kv_namespaces ?? []) {
     if (!resource.id) fail(`Existing Workshop requires an explicit ${resource.binding} KV identity.`);
     const actual = namedBinding(bindings, resource.binding);
@@ -733,8 +758,15 @@ export function verifyExistingWorkshopIdentity(version, workshopConfig, wwwkWork
   const configuredWwwk = workshopConfig.services.find(
     binding => binding.binding === "GATEKEEPER_WWWK",
   )?.service;
-  if (wwwk.length === 1 && wwwk[0].service !== (configuredWwwk ?? wwwkWorkerName)) {
-    fail("Existing Workshop GATEKEEPER_WWWK binding has a different owner.");
+  if (
+    wwwk.length === 1 && (
+      wwwk[0].type !== "service" ||
+      wwwk[0].service !== (configuredWwwk ?? wwwkWorkerName) ||
+      wwwk[0].entrypoint !== "GatekeeperVendor" ||
+      wwwk[0].environment !== undefined
+    )
+  ) {
+    fail("Existing Workshop GATEKEEPER_WWWK binding identity does not match.");
   }
 }
 

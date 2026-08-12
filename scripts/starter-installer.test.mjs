@@ -443,6 +443,45 @@ test("rejects changed access variables and service identities before live deploy
   );
 });
 
+test("rejects changed Workshop Durable Object exports before live deploy", () => {
+  const config = {
+    ...workshopConfig,
+    migrations: [{
+      tag: "v0",
+      new_sqlite_classes: ["UserDurableObject", "OverseerDurableObject"],
+    }],
+  };
+  const version = {resources: {
+    bindings: [
+      {name: "ADMINS", type: "json", json: ["admin@example.invalid"]},
+      {name: "CF_ACCESS_ISS", type: "plain_text", text: "https://access.example.invalid"},
+      {name: "CF_ACCESS_AUD", type: "plain_text", text: "audience"},
+      {
+        name: "GATEKEEPER_CONTEXT",
+        type: "service",
+        service: "context",
+        entrypoint: "GatekeeperVendor",
+      },
+      {
+        name: "GATEKEEPER_CUSTOM",
+        type: "service",
+        service: "custom",
+        entrypoint: "GatekeeperVendor",
+      },
+    ],
+    script_runtime: {exports: {
+      UserDurableObject: {type: "durable-object", storage: "sqlite"},
+      OverseerDurableObject: {type: "durable-object", storage: "sqlite", state: "created"},
+    }},
+  }};
+  assert.doesNotThrow(() => verifyExistingWorkshopIdentity(version, config));
+  version.resources.script_runtime.exports.UserDurableObject.storage = "legacy-kv";
+  assert.throws(
+    () => verifyExistingWorkshopIdentity(version, config),
+    /UserDurableObject Durable Object export identity does not match/,
+  );
+});
+
 test("verifies WWWK SQLite Durable Object exports from the live version", () => {
   const version = {resources: {script_runtime: {exports: {
     WwwkLibrary: {type: "durable-object", storage: "sqlite"},
@@ -529,12 +568,23 @@ test("accepts only the selected WWWK binding while preparing disconnect", () => 
       service: "custom",
       entrypoint: "GatekeeperVendor",
     },
-    {name: "GATEKEEPER_WWWK", type: "service", service: "wwwk"},
+    {
+      name: "GATEKEEPER_WWWK",
+      type: "service",
+      service: "wwwk",
+      entrypoint: "GatekeeperVendor",
+    },
   ]}};
   assert.doesNotThrow(() => verifyExistingWorkshopIdentity(version, disconnected, "wwwk"));
   version.resources.bindings[5].service = "other";
   assert.throws(
     () => verifyExistingWorkshopIdentity(version, disconnected, "wwwk"),
-    /different owner/,
+    /binding identity does not match/,
+  );
+  version.resources.bindings[5].service = "wwwk";
+  version.resources.bindings[5].environment = "other";
+  assert.throws(
+    () => verifyExistingWorkshopIdentity(version, disconnected, "wwwk"),
+    /binding identity does not match/,
   );
 });
