@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import {
   access,
+  chmod,
   lstat,
   mkdir,
+  mkdtemp,
   readFile,
   readdir,
   realpath,
@@ -11,9 +13,10 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { spawn } from "node:child_process";
+import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import compatibility from "../installer/compatibility.json" with {type: "json"};
@@ -37,9 +40,33 @@ const officialCfosRemotes = new Set([
   "git@github.com:cloudflare/cloudflare-os.git",
   "ssh://git@github.com/cloudflare/cloudflare-os.git",
 ]);
+const temporaryWranglerDirectories = new Set();
+let signalCleanupInstalled = false;
 
 function fail(message) {
   throw new Error(`Starter installer: ${message}`);
+}
+
+function removeTemporaryWranglerDirectorySync(directory) {
+  try {
+    rmSync(directory, {recursive: true, force: true, maxRetries: 2});
+  } catch {
+    // signal終了時の回収はbest-effortとし、通常時はfinallyで失敗を報告する。
+  }
+}
+
+function installSignalCleanup() {
+  if (signalCleanupInstalled) return;
+  signalCleanupInstalled = true;
+  for (const signal of ["SIGINT", "SIGTERM"]) {
+    process.once(signal, () => {
+      for (const directory of temporaryWranglerDirectories) {
+        removeTemporaryWranglerDirectorySync(directory);
+      }
+      temporaryWranglerDirectories.clear();
+      process.exit(signal === "SIGINT" ? 130 : 143);
+    });
+  }
 }
 
 export function run(command, args, options = {}) {
@@ -466,6 +493,110 @@ async function generatedConfigs(integrationPath, cfosRoot, deployment, wwwkWorke
   return {deployment, starter: {...starter, workshop: pair.workshop}, wwwk: pair.wwwk};
 }
 
+function configEntries(configs) {
+  const entries = [
+    ["workshop", configs.starter?.workshop],
+    ["context", configs.starter?.context],
+    ["custom-gatekeeper", configs.starter?.customGatekeeper],
+    ["wwwk", configs.wwwk],
+  ].filter(([, config]) => config !== undefined);
+  if (configs.starter?.errorReporter) {
+    entries.push(["error-reporter", configs.starter.errorReporter]);
+  }
+  return entries;
+}
+
+function configWithAbsolutePaths(config, sourceDirectory) {
+  if (!sourceDirectory) return config;
+  const resolved = structuredClone(config);
+  if (typeof resolved.main === "string" && !isAbsolute(resolved.main)) {
+    resolved.main = resolve(sourceDirectory, resolved.main);
+  }
+  if (typeof resolved.assets?.directory === "string" && !isAbsolute(resolved.assets.directory)) {
+    resolved.assets.directory = resolve(sourceDirectory, resolved.assets.directory);
+  }
+  return resolved;
+}
+
+async function verifyTemporaryWranglerDirectory(directory) {
+  const entry = await lstat(directory);
+  if (!entry.isDirectory() || entry.isSymbolicLink()) {
+    fail("Temporary Wrangler directory must be a real directory.");
+  }
+  if ((entry.mode & 0o777) !== 0o700) {
+    fail("Temporary Wrangler directory must be owner-only (0700).");
+  }
+}
+
+export async function createTemporaryWranglerDirectory(temporaryRoot = tmpdir()) {
+  const root = await canonicalExistingDirectory(temporaryRoot, "Temporary directory");
+  let directory;
+  try {
+    const rootEntry = await lstat(root);
+    if (!rootEntry.isDirectory() || rootEntry.isSymbolicLink()) {
+      fail("Temporary directory must be a real directory.");
+    }
+    directory = await mkdtemp(join(root, "wwwk-wrangler-"));
+    await chmod(directory, 0o700);
+    await verifyTemporaryWranglerDirectory(directory);
+    temporaryWranglerDirectories.add(directory);
+    installSignalCleanup();
+    return directory;
+  } catch (error) {
+    if (directory) await rm(directory, {recursive: true, force: true});
+    throw error;
+  }
+}
+
+export async function writeTemporaryWranglerConfig(directory, name, config, sourceDirectory) {
+  if (!/^[a-z0-9-]+$/.test(name)) fail("Temporary Wrangler config name is invalid.");
+  await verifyTemporaryWranglerDirectory(directory);
+  const configPath = join(directory, `${name}.wrangler.jsonc`);
+  try {
+    await writeFile(configPath, `${JSON.stringify(
+      configWithAbsolutePaths(config, sourceDirectory),
+      null,
+      2,
+    )}\n`, {
+      mode: 0o600,
+      flag: "wx",
+    });
+  } catch (error) {
+    if (error?.code === "EEXIST") {
+      fail("Temporary Wrangler config must not reuse an existing file.");
+    }
+    throw error;
+  }
+  const entry = await lstat(configPath);
+  if (!entry.isFile() || entry.isSymbolicLink() || (entry.mode & 0o777) !== 0o600) {
+    await rm(configPath, {force: true});
+    fail("Temporary Wrangler config must be an owner-only regular file.");
+  }
+  return configPath;
+}
+
+export async function withTemporaryWranglerConfigs(configs, callback, options = {}) {
+  let directory;
+  try {
+    directory = await createTemporaryWranglerDirectory(options.temporaryRoot);
+    const configPaths = {};
+    for (const [name, config] of configEntries(configs)) {
+      configPaths[name] = await writeTemporaryWranglerConfig(
+        directory,
+        name,
+        config,
+        options.sourceDirectories?.[name],
+      );
+    }
+    return await callback({directory, configPaths});
+  } finally {
+    if (directory) {
+      temporaryWranglerDirectories.delete(directory);
+      await rm(directory, {recursive: true, force: true});
+    }
+  }
+}
+
 function generatedPath(directory) {
   return join(directory, ".wwwk-installer.wrangler.jsonc");
 }
@@ -534,43 +665,135 @@ function namedBinding(bindings, name) {
   return matches[0];
 }
 
-export function verifyExistingWorkshopIdentity(version, workshopConfig) {
+function matchesJson(left, right) {
+  if (left === right) return true;
+  if (!left || !right || typeof left !== "object" || typeof right !== "object") return false;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left) && Array.isArray(right) && left.length === right.length &&
+      left.every((value, index) => matchesJson(value, right[index]));
+  }
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  return leftKeys.length === rightKeys.length && leftKeys.every((key, index) =>
+    key === rightKeys[index] && matchesJson(left[key], right[key]));
+}
+
+function verifyWorkshopVars(bindings, workshopConfig) {
+  for (const [name, expected] of Object.entries(workshopConfig.vars ?? {})) {
+    const actual = namedBinding(bindings, name);
+    const valid = typeof expected === "string"
+      ? actual.type === "plain_text" && actual.text === expected
+      : actual.type === "json" && matchesJson(actual.json, expected);
+    if (!valid) fail(`Existing Workshop ${name} variable identity does not match.`);
+  }
+}
+
+function verifyWorkshopServices(bindings, workshopConfig) {
+  for (const expected of workshopConfig.services.filter(
+    service => service.binding !== "GATEKEEPER_WWWK",
+  )) {
+    const actual = namedBinding(bindings, expected.binding);
+    if (
+      actual.type !== "service" ||
+      actual.service !== expected.service ||
+      actual.entrypoint !== expected.entrypoint ||
+      actual.environment !== expected.environment
+    ) {
+      fail(`Existing Workshop ${expected.binding} service identity does not match.`);
+    }
+  }
+}
+
+function verifyWorkshopDurableObjects(version, workshopConfig) {
+  const expectedClasses = (workshopConfig.migrations ?? []).flatMap(
+    migration => migration.new_sqlite_classes ?? [],
+  );
+  if (expectedClasses.length === 0) return;
+  const exports = version?.resources?.script_runtime?.exports;
+  if (!exports || typeof exports !== "object" || Array.isArray(exports)) {
+    fail("Workshop Worker version does not expose Durable Object exports.");
+  }
+  for (const name of expectedClasses) {
+    const entry = exports[name];
+    if (
+      !entry ||
+      typeof entry !== "object" ||
+      Array.isArray(entry) ||
+      entry.type !== "durable-object" ||
+      entry.storage !== "sqlite" ||
+      (entry.state !== undefined && entry.state !== "created")
+    ) {
+      fail(`Existing Workshop ${name} Durable Object export identity does not match.`);
+    }
+  }
+}
+
+export function verifyExistingWorkshopIdentity(version, workshopConfig, wwwkWorkerName) {
+  const bindings = resourceBindings(version);
+  verifyWorkshopVars(bindings, workshopConfig);
+  verifyWorkshopServices(bindings, workshopConfig);
+  verifyWorkshopDurableObjects(version, workshopConfig);
   for (const resource of workshopConfig.kv_namespaces ?? []) {
     if (!resource.id) fail(`Existing Workshop requires an explicit ${resource.binding} KV identity.`);
-    const actual = namedBinding(resourceBindings(version), resource.binding);
-    if (bindingValue(actual, ["namespace_id", "namespace"]) !== resource.id) {
+    const actual = namedBinding(bindings, resource.binding);
+    if (
+      actual.type !== "kv_namespace" ||
+      bindingValue(actual, ["namespace_id", "namespace"]) !== resource.id
+    ) {
       fail(`Existing Workshop ${resource.binding} KV identity does not match.`);
     }
   }
   for (const resource of workshopConfig.r2_buckets ?? []) {
     if (!resource.bucket_name) fail(`Existing Workshop requires an explicit ${resource.binding} R2 identity.`);
-    const actual = namedBinding(resourceBindings(version), resource.binding);
-    if (bindingValue(actual, ["bucket_name", "bucket"]) !== resource.bucket_name) {
+    const actual = namedBinding(bindings, resource.binding);
+    if (
+      actual.type !== "r2_bucket" ||
+      bindingValue(actual, ["bucket_name", "bucket"]) !== resource.bucket_name
+    ) {
       fail(`Existing Workshop ${resource.binding} R2 identity does not match.`);
     }
   }
-  const wwwk = resourceBindings(version).filter(binding => binding.name === "GATEKEEPER_WWWK");
+  const wwwk = bindings.filter(binding => binding.name === "GATEKEEPER_WWWK");
   if (wwwk.length > 1) fail("Existing Workshop has duplicate GATEKEEPER_WWWK bindings.");
-  if (wwwk.length === 1 && wwwk[0].service !== workshopConfig.services.find(
+  const configuredWwwk = workshopConfig.services.find(
     binding => binding.binding === "GATEKEEPER_WWWK",
-  )?.service) {
-    fail("Existing Workshop GATEKEEPER_WWWK binding has a different owner.");
+  )?.service;
+  if (
+    wwwk.length === 1 && (
+      wwwk[0].type !== "service" ||
+      wwwk[0].service !== (configuredWwwk ?? wwwkWorkerName) ||
+      wwwk[0].entrypoint !== "GatekeeperVendor" ||
+      wwwk[0].environment !== undefined
+    )
+  ) {
+    fail("Existing Workshop GATEKEEPER_WWWK binding identity does not match.");
   }
 }
 
-function latestVersionId(deployments) {
-  const list = Array.isArray(deployments) ? deployments : deployments?.deployments;
-  if (!Array.isArray(list)) fail("Wrangler deployments response is invalid.");
-  if (list.length === 0) return undefined;
-  const versions = list[0]?.versions;
+export function productionVersionId(deployment) {
+  if (!deployment || typeof deployment !== "object" || Array.isArray(deployment)) {
+    fail("Wrangler production deployment response is invalid.");
+  }
+  const versions = deployment.versions;
   if (!Array.isArray(versions) || versions.length !== 1 || typeof versions[0]?.version_id !== "string") {
-    fail("Current Workshop deployment cannot be identified uniquely.");
+    fail("Current production Worker version cannot be identified uniquely.");
   }
   return versions[0].version_id;
 }
 
-async function wranglerJson(directory, args) {
-  const result = await run("pnpm", ["exec", "wrangler", ...args, "--json"], {cwd: directory});
+export function liveWranglerOptions(directory) {
+  return {cwd: directory, env: {WRANGLER_WRITE_LOGS: "false"}};
+}
+
+async function wranglerJson(directory, args, configPath) {
+  const result = await run("pnpm", [
+    "exec",
+    "wrangler",
+    ...args,
+    "--config",
+    configPath,
+    "--json",
+  ], liveWranglerOptions(directory));
   try {
     return JSON.parse(result.stdout);
   } catch {
@@ -578,43 +801,141 @@ async function wranglerJson(directory, args) {
   }
 }
 
-async function currentWorkerVersion(directory, workerName) {
-  const versionId = latestVersionId(await wranglerJson(directory, [
-    "deployments", "list", "--name", workerName,
-  ]));
-  if (!versionId) return undefined;
-  return wranglerJson(directory, ["versions", "view", versionId, "--name", workerName]);
+async function currentWorkerVersion(directory, workerName, configPath) {
+  let deployment;
+  try {
+    deployment = await wranglerJson(directory, [
+      "deployments", "status", "--name", workerName,
+    ], configPath);
+  } catch (error) {
+    if (/has no deployments\./.test(`${error?.stdout ?? ""}\n${error?.stderr ?? ""}`)) {
+      return undefined;
+    }
+    throw error;
+  }
+  const versionId = productionVersionId(deployment);
+  return wranglerJson(directory, [
+    "versions",
+    "view",
+    versionId,
+    "--name",
+    workerName,
+  ], configPath);
 }
 
-async function verifyApplyIdentity(configs, cfosRoot) {
-  const workshopDirectory = join(cfosRoot, "packages", "workshop-backend");
-  const workshop = await currentWorkerVersion(
-    workshopDirectory,
-    configs.deployment.workers.workshop.name,
-  );
-  if (!workshop) {
-    fail("Baseline Starter deploy is required and must be separately approved.");
+export function verifyWwwkDurableObjectIdentity(version) {
+  const exports = version?.resources?.script_runtime?.exports;
+  if (!exports || typeof exports !== "object" || Array.isArray(exports)) {
+    fail("WWWK Worker version does not expose Durable Object exports.");
   }
-  verifyExistingWorkshopIdentity(workshop, configs.starter.workshop);
-  const wwwkDirectory = join(cfosRoot, "packages", "gatekeeper-wwwk");
-  const wwwk = await currentWorkerVersion(wwwkDirectory, configs.wwwk.name);
-  if (wwwk) {
-    const bindings = resourceBindings(wwwk);
-    for (const name of ["WwwkLibrary", "WwwkGatekeeper"]) {
-      const binding = namedBinding(bindings, name);
-      if (binding.class_name !== name) fail(`Existing WWWK ${name} Durable Object identity does not match.`);
+  for (const name of ["WwwkLibrary", "WwwkGatekeeper"]) {
+    const entry = exports[name];
+    if (
+      !entry ||
+      typeof entry !== "object" ||
+      Array.isArray(entry) ||
+      entry.type !== "durable-object" ||
+      entry.storage !== "sqlite" ||
+      (entry.state !== undefined && entry.state !== "created")
+    ) {
+      fail(`Existing WWWK ${name} Durable Object export identity does not match.`);
     }
   }
 }
 
-async function deploy(directory) {
-  await run("pnpm", ["exec", "wrangler", "deploy", "--config", generatedPath(directory)], {
-    cwd: directory,
-    stdio: "inherit",
-  });
+export function verifyWwwkBrokerIdentity(version, workshopWorkerName) {
+  const brokers = resourceBindings(version).filter(
+    binding => binding.name === "CFOS_SOURCE_ACCESS_BROKER",
+  );
+  if (brokers.length === 0) return;
+  if (
+    brokers.length !== 1 ||
+    brokers[0].type !== "service" ||
+    brokers[0].service !== workshopWorkerName ||
+    brokers[0].entrypoint !== "SourceAccessBroker" ||
+    brokers[0].environment !== undefined
+  ) {
+    fail("Existing WWWK CFOS_SOURCE_ACCESS_BROKER identity does not match.");
+  }
 }
 
-function printPlan(command) {
+async function verifyApplyIdentity(configs, cfosRoot, configPaths, command) {
+  const workshopDirectory = join(cfosRoot, "packages", "workshop-backend");
+  const workshop = await currentWorkerVersion(
+    workshopDirectory,
+    configs.deployment.workers.workshop.name,
+    configPaths.workshop,
+  );
+  if (!workshop) {
+    fail("Baseline Starter deploy is required and must be separately approved.");
+  }
+  verifyExistingWorkshopIdentity(workshop, configs.starter.workshop, configs.wwwk.name);
+  const wwwkDirectory = join(cfosRoot, "packages", "gatekeeper-wwwk");
+  const wwwk = await currentWorkerVersion(wwwkDirectory, configs.wwwk.name, configPaths.wwwk);
+  if (!wwwk && command === "disconnect") {
+    fail("Existing WWWK Worker cannot be identified for disconnect.");
+  }
+  if (wwwk) {
+    verifyWwwkDurableObjectIdentity(wwwk);
+    verifyWwwkBrokerIdentity(
+      wwwk,
+      configs.deployment.workers.workshop.name,
+    );
+  }
+}
+
+async function deploy(directory, configPath) {
+  await run(
+    "pnpm",
+    ["exec", "wrangler", "deploy", "--config", configPath],
+    liveWranglerOptions(directory),
+  );
+}
+
+async function confirmLiveDeploy(command, input = process.stdin, output = process.stdout) {
+  if (!input.isTTY || !output.isTTY) {
+    fail("Live deploy requires an interactive confirmation.");
+  }
+  const readline = createInterface({input, output});
+  try {
+    const answer = await readline.question(
+      command === "install"
+        ? "Deploy WWWK, then connect Workshop? [y/N] "
+        : "Disconnect Workshop, then deploy WWWK without its broker? [y/N] ",
+    );
+    if (answer.trim().toLowerCase() !== "y") fail("Live deploy was not confirmed.");
+  } finally {
+    readline.close();
+  }
+}
+
+async function deployLive(configs, cfosRoot, command) {
+  const directories = {
+    workshop: join(cfosRoot, "packages", "workshop-backend"),
+    wwwk: join(cfosRoot, "packages", "gatekeeper-wwwk"),
+  };
+  return withTemporaryWranglerConfigs({
+    starter: {workshop: configs.starter.workshop},
+    wwwk: configs.wwwk,
+  }, async ({configPaths}) => {
+    await verifyApplyIdentity(configs, cfosRoot, configPaths, command);
+    console.log(command === "install"
+      ? "Live deploy plan: WWWK, then Workshop connection."
+      : "Live deploy plan: Workshop disconnect, then WWWK broker removal.");
+    console.log("Cloudflare will receive Worker version updates; no resource is deleted.");
+    console.log("Existing Worker names, Durable Object classes, KV, and R2 identities are verified first.");
+    await confirmLiveDeploy(command);
+    if (command === "install") {
+      await deploy(directories.wwwk, configPaths.wwwk);
+      await deploy(directories.workshop, configPaths.workshop);
+      return;
+    }
+    await deploy(directories.workshop, configPaths.workshop);
+    await deploy(directories.wwwk, configPaths.wwwk);
+  }, {sourceDirectories: directories});
+}
+
+function printPlan(command, apply) {
   const phase = command === "install" ? "connect" : "disconnect";
   console.log(`Starter installer plan (${phase})`);
   console.log("- external deployment config validated without copying its values");
@@ -622,12 +943,16 @@ function printPlan(command) {
   console.log(command === "install"
     ? "- deploy order: WWWK, then Workshop with GATEKEEPER_WWWK"
     : "- deploy order: Workshop without GATEKEEPER_WWWK, then WWWK without broker binding");
-  console.log("- no Cloudflare API read, resource provisioning, or deploy is performed");
+  if (apply) {
+    console.log("- live identity verification and deploy require a later interactive confirmation");
+  } else {
+    console.log("- no Cloudflare API read, resource provisioning, or deploy is performed");
+  }
 }
 
 export async function runStarterInstaller(options) {
-  if (options.apply) {
-    fail("Live deploy is disabled until an in-memory config runner preserves external config privacy.");
+  if (options.apply && (!options.starter || !options.wwwkWorker || !options.stateDir || !options.deploymentConfig)) {
+    fail("Live deploy requires complete parsed installer options.");
   }
   const starterRoot = await verifyStarter(options.starter);
   await verifyWwwkRuntime();
@@ -642,7 +967,7 @@ export async function runStarterInstaller(options) {
   const connected = options.command === "install";
   let directories = [];
   try {
-    await generatedConfigs(
+    const liveConfigs = await generatedConfigs(
       paths.integrationPath,
       cfosRoot,
       deployment,
@@ -660,9 +985,13 @@ export async function runStarterInstaller(options) {
       "wwwk-fixture",
       connected,
     );
-    printPlan(options.command);
+    printPlan(options.command, options.apply);
     directories = await writeGeneratedConfigs(paths.integrationPath, cfosRoot, fixtureConfigs);
     await buildAndDryRun(paths.integrationPath, cfosRoot, directories);
+    if (options.apply) {
+      await deployLive(liveConfigs, cfosRoot, options.command);
+      return {paths, applied: true};
+    }
     return {paths, dryRun: true};
   } finally {
     await removeGeneratedConfigs(directories);

@@ -4,9 +4,9 @@
 
 WWWK の利用者向け導入方式は、version 固定の installer とする。特定の CFOS または
 `cloudflare-os-starter` fork は要求しない。Phase 6では対応する公式 CFOS clone をローカルで
-起動する入口を提供する。Phase 7では対応する Starter checkout に対する build と Wrangler
-dry-run の入口を提供する。Cloudflare deploy は、実値をartifactへ書かない runner と実行直前の
-明示承認が必要であり、前者は未実装である。
+起動する入口を提供する。Phase 7では対応する Starter checkout に対する build、Wrangler
+dry-run、および明示確認付きのlive runnerを提供する。Cloudflare deployは、実行直前の
+明示承認が必要である。
 
 現在の symbolic link 手順は内部的なローカル開発専用である。利用者向けの install / uninstall
 契約にはしない。
@@ -182,9 +182,17 @@ pnpm run disconnect:starter -- \
 
 `$DEPLOYMENT_CONFIG` は Starter checkout と installer managed state の外に置く通常ファイルで、
 group / other の権限を持たない0600相当でなければならない。installer はcanonical pathを確認し、
-このファイルをread-onlyでメモリにだけ読み込む。実値はintegration worktree、generated config、ログへ
-書かず、dry-runには追跡されたfixtureだけを使う。新規 Starter は先に基底 deployment を別の
-明示承認で完了している必要がある。現時点の`--apply`はfail-closedで拒否する。
+このファイルをread-onlyでメモリにだけ読み込む。実値はrepository、integration worktree、managed
+state、ログ、PRへ書かず、dry-runには追跡されたfixtureだけを使う。
+
+`--apply`では、Wrangler実行に必要な設定だけをOSの一時領域に作る。directoryは推測困難な専用の
+0700、configは0600であり、symlinkまたは既存fileの再利用を拒否する。この一時configは成功・失敗とも
+`finally`で削除し、SIGINT / SIGTERMでも可能な範囲で回収する。強制終了または電源断では削除を完全には
+保証できないため、復旧後にOSの一時領域を確認する。この一時configは永続、配布、追跡されるartifactでは
+ない。live runnerはWranglerのdisk logも無効化する。live実行ではidentity確認後にCLIがsecret-freeな
+実行計画を表示し、`y`で明示確認されるまでCloudflareを変更しない。
+
+新規 Starter は先に基底deploymentを別の明示承認で完了している必要がある。
 
 ## アンインストール
 
