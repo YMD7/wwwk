@@ -397,6 +397,12 @@ function requireExactWwwkExports(config) {
   }
 }
 
+function requireWwwkStubStorage(config) {
+  if (!config.compatibility_flags?.includes("allow_irrevocable_stub_storage")) {
+    fail("WWWK Worker must allow persistent RPC stub storage.");
+  }
+}
+
 export function createStarterConfigs({
   workshopConfig,
   wwwkConfig,
@@ -414,6 +420,7 @@ export function createStarterConfigs({
   if (typeof accountId !== "string" || !accountId) fail("Starter account is invalid.");
   validateWorkerName(workshopWorkerName);
   validateWorkerName(wwwkWorkerName);
+  requireWwwkStubStorage(wwwkConfig);
   requireExactWwwkExports(wwwkConfig);
   const hasWwwkBinding = workshopConfig.services.some(
     service => service.binding === "GATEKEEPER_WWWK",
