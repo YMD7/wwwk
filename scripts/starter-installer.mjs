@@ -665,22 +665,71 @@ function namedBinding(bindings, name) {
   return matches[0];
 }
 
+function matchesJson(left, right) {
+  if (left === right) return true;
+  if (!left || !right || typeof left !== "object" || typeof right !== "object") return false;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left) && Array.isArray(right) && left.length === right.length &&
+      left.every((value, index) => matchesJson(value, right[index]));
+  }
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  return leftKeys.length === rightKeys.length && leftKeys.every((key, index) =>
+    key === rightKeys[index] && matchesJson(left[key], right[key]));
+}
+
+function verifyWorkshopVars(bindings, workshopConfig) {
+  for (const [name, expected] of Object.entries(workshopConfig.vars ?? {})) {
+    const actual = namedBinding(bindings, name);
+    const valid = typeof expected === "string"
+      ? actual.type === "plain_text" && actual.text === expected
+      : actual.type === "json" && matchesJson(actual.json, expected);
+    if (!valid) fail(`Existing Workshop ${name} variable identity does not match.`);
+  }
+}
+
+function verifyWorkshopServices(bindings, workshopConfig) {
+  for (const expected of workshopConfig.services.filter(
+    service => service.binding !== "GATEKEEPER_WWWK",
+  )) {
+    const actual = namedBinding(bindings, expected.binding);
+    if (
+      actual.type !== "service" ||
+      actual.service !== expected.service ||
+      actual.entrypoint !== expected.entrypoint ||
+      !matchesJson(actual.props, expected.props) ||
+      actual.environment !== expected.environment
+    ) {
+      fail(`Existing Workshop ${expected.binding} service identity does not match.`);
+    }
+  }
+}
+
 export function verifyExistingWorkshopIdentity(version, workshopConfig, wwwkWorkerName) {
+  const bindings = resourceBindings(version);
+  verifyWorkshopVars(bindings, workshopConfig);
+  verifyWorkshopServices(bindings, workshopConfig);
   for (const resource of workshopConfig.kv_namespaces ?? []) {
     if (!resource.id) fail(`Existing Workshop requires an explicit ${resource.binding} KV identity.`);
-    const actual = namedBinding(resourceBindings(version), resource.binding);
-    if (bindingValue(actual, ["namespace_id", "namespace"]) !== resource.id) {
+    const actual = namedBinding(bindings, resource.binding);
+    if (
+      actual.type !== "kv_namespace" ||
+      bindingValue(actual, ["namespace_id", "namespace"]) !== resource.id
+    ) {
       fail(`Existing Workshop ${resource.binding} KV identity does not match.`);
     }
   }
   for (const resource of workshopConfig.r2_buckets ?? []) {
     if (!resource.bucket_name) fail(`Existing Workshop requires an explicit ${resource.binding} R2 identity.`);
-    const actual = namedBinding(resourceBindings(version), resource.binding);
-    if (bindingValue(actual, ["bucket_name", "bucket"]) !== resource.bucket_name) {
+    const actual = namedBinding(bindings, resource.binding);
+    if (
+      actual.type !== "r2_bucket" ||
+      bindingValue(actual, ["bucket_name", "bucket"]) !== resource.bucket_name
+    ) {
       fail(`Existing Workshop ${resource.binding} R2 identity does not match.`);
     }
   }
-  const wwwk = resourceBindings(version).filter(binding => binding.name === "GATEKEEPER_WWWK");
+  const wwwk = bindings.filter(binding => binding.name === "GATEKEEPER_WWWK");
   if (wwwk.length > 1) fail("Existing Workshop has duplicate GATEKEEPER_WWWK bindings.");
   const configuredWwwk = workshopConfig.services.find(
     binding => binding.binding === "GATEKEEPER_WWWK",
@@ -690,13 +739,13 @@ export function verifyExistingWorkshopIdentity(version, workshopConfig, wwwkWork
   }
 }
 
-function latestVersionId(deployments) {
-  const list = Array.isArray(deployments) ? deployments : deployments?.deployments;
-  if (!Array.isArray(list)) fail("Wrangler deployments response is invalid.");
-  if (list.length === 0) return undefined;
-  const versions = list[0]?.versions;
+export function productionVersionId(deployment) {
+  if (!deployment || typeof deployment !== "object" || Array.isArray(deployment)) {
+    fail("Wrangler production deployment response is invalid.");
+  }
+  const versions = deployment.versions;
   if (!Array.isArray(versions) || versions.length !== 1 || typeof versions[0]?.version_id !== "string") {
-    fail("Current Workshop deployment cannot be identified uniquely.");
+    fail("Current production Worker version cannot be identified uniquely.");
   }
   return versions[0].version_id;
 }
@@ -722,10 +771,18 @@ async function wranglerJson(directory, args, configPath) {
 }
 
 async function currentWorkerVersion(directory, workerName, configPath) {
-  const versionId = latestVersionId(await wranglerJson(directory, [
-    "deployments", "list", "--name", workerName,
-  ], configPath));
-  if (!versionId) return undefined;
+  let deployment;
+  try {
+    deployment = await wranglerJson(directory, [
+      "deployments", "status", "--name", workerName,
+    ], configPath);
+  } catch (error) {
+    if (/has no deployments\./.test(`${error?.stdout ?? ""}\n${error?.stderr ?? ""}`)) {
+      return undefined;
+    }
+    throw error;
+  }
+  const versionId = productionVersionId(deployment);
   return wranglerJson(directory, [
     "versions",
     "view",
@@ -733,6 +790,26 @@ async function currentWorkerVersion(directory, workerName, configPath) {
     "--name",
     workerName,
   ], configPath);
+}
+
+export function verifyWwwkDurableObjectIdentity(version) {
+  const exports = version?.resources?.script_runtime?.exports;
+  if (!exports || typeof exports !== "object" || Array.isArray(exports)) {
+    fail("WWWK Worker version does not expose Durable Object exports.");
+  }
+  for (const name of ["WwwkLibrary", "WwwkGatekeeper"]) {
+    const entry = exports[name];
+    if (
+      !entry ||
+      typeof entry !== "object" ||
+      Array.isArray(entry) ||
+      entry.type !== "durable-object" ||
+      entry.storage !== "sqlite" ||
+      (entry.state !== undefined && entry.state !== "created")
+    ) {
+      fail(`Existing WWWK ${name} Durable Object export identity does not match.`);
+    }
+  }
 }
 
 async function verifyApplyIdentity(configs, cfosRoot, configPaths, command) {
@@ -752,11 +829,7 @@ async function verifyApplyIdentity(configs, cfosRoot, configPaths, command) {
     fail("Existing WWWK Worker cannot be identified for disconnect.");
   }
   if (wwwk) {
-    const bindings = resourceBindings(wwwk);
-    for (const name of ["WwwkLibrary", "WwwkGatekeeper"]) {
-      const binding = namedBinding(bindings, name);
-      if (binding.class_name !== name) fail(`Existing WWWK ${name} Durable Object identity does not match.`);
-    }
+    verifyWwwkDurableObjectIdentity(wwwk);
   }
 }
 

@@ -20,15 +20,33 @@ import {
   liveWranglerOptions,
   loadExternalDeploymentConfig,
   parseArgs,
+  productionVersionId,
   run,
   runStarterInstaller,
   verifyExistingWorkshopIdentity,
+  verifyWwwkDurableObjectIdentity,
   withTemporaryWranglerConfigs,
   workshopFrontendBuildOptions,
   writeTemporaryWranglerConfig,
 } from "./starter-installer.mjs";
 
-const workshopConfig = {services: [{binding: "GATEKEEPER_CONTEXT", service: "context"}]};
+const workshopConfig = {
+  vars: {
+    ADMINS: ["admin@example.invalid"],
+    CF_ACCESS_ISS: "https://access.example.invalid",
+    CF_ACCESS_AUD: "audience",
+  },
+  services: [{
+    binding: "GATEKEEPER_CONTEXT",
+    service: "context",
+    entrypoint: "GatekeeperVendor",
+    props: {sharingDomain: "example"},
+  }, {
+    binding: "GATEKEEPER_CUSTOM",
+    service: "custom",
+    entrypoint: "GatekeeperVendor",
+  }],
+};
 const wwwkConfig = {
   services: [{
     binding: "CFOS_SOURCE_ACCESS_BROKER",
@@ -301,7 +319,7 @@ test("creates reciprocal bindings while preserving SQLite Durable Object exports
     entrypoint: "SourceAccessBroker",
   }]);
   assert.deepEqual(connected.wwwk.exports, wwwkConfig.exports);
-  assert.equal(workshopConfig.services.length, 1);
+  assert.equal(workshopConfig.services.length, 2);
 });
 
 test("disconnect removes only the reciprocal service bindings", () => {
@@ -351,14 +369,99 @@ test("requires explicit existing resource identities before apply", () => {
   connected.kv_namespaces = [{binding: "BLUEPRINTS", id: "kv-1"}];
   connected.r2_buckets = [{binding: "BLUEPRINT_CONTENT", bucket_name: "bucket-1"}];
   const version = {resources: {bindings: [
-    {name: "BLUEPRINTS", namespace_id: "kv-1"},
-    {name: "BLUEPRINT_CONTENT", bucket_name: "bucket-1"},
+    {name: "ADMINS", type: "json", json: ["admin@example.invalid"]},
+    {name: "CF_ACCESS_ISS", type: "plain_text", text: "https://access.example.invalid"},
+    {name: "CF_ACCESS_AUD", type: "plain_text", text: "audience"},
+    {
+      name: "GATEKEEPER_CONTEXT",
+      type: "service",
+      service: "context",
+      entrypoint: "GatekeeperVendor",
+      props: {sharingDomain: "example"},
+    },
+    {
+      name: "GATEKEEPER_CUSTOM",
+      type: "service",
+      service: "custom",
+      entrypoint: "GatekeeperVendor",
+    },
+    {name: "BLUEPRINTS", type: "kv_namespace", namespace_id: "kv-1"},
+    {name: "BLUEPRINT_CONTENT", type: "r2_bucket", bucket_name: "bucket-1"},
   ]}};
   assert.doesNotThrow(() => verifyExistingWorkshopIdentity(version, connected));
-  version.resources.bindings[0].namespace_id = "other";
+  version.resources.bindings[5].namespace_id = "other";
   assert.throws(() => verifyExistingWorkshopIdentity(version, connected), /identity does not match/);
   connected.kv_namespaces[0] = {binding: "BLUEPRINTS"};
   assert.throws(() => verifyExistingWorkshopIdentity(version, connected), /explicit/);
+});
+
+test("uses only the current production deployment version", () => {
+  const deploymentHistory = [
+    {id: "old-deployment", versions: [{version_id: "old-version", percentage: 100}]},
+    {id: "current-deployment", versions: [{version_id: "current-version", percentage: 100}]},
+  ];
+  const status = deploymentHistory[1];
+  assert.equal(productionVersionId(status), "current-version");
+  assert.throws(() => productionVersionId({
+    versions: [
+      {version_id: "old-version", percentage: 50},
+      {version_id: "new-version", percentage: 50},
+    ],
+  }), /cannot be identified uniquely/);
+  assert.throws(() => productionVersionId({deployments: deploymentHistory}), /cannot be identified uniquely/);
+});
+
+test("rejects changed access variables and service identities before live deploy", () => {
+  const version = {resources: {bindings: [
+    {name: "ADMINS", type: "json", json: ["admin@example.invalid"]},
+    {name: "CF_ACCESS_ISS", type: "plain_text", text: "https://access.example.invalid"},
+    {name: "CF_ACCESS_AUD", type: "plain_text", text: "audience"},
+    {
+      name: "GATEKEEPER_CONTEXT",
+      type: "service",
+      service: "context",
+      entrypoint: "GatekeeperVendor",
+      props: {sharingDomain: "example"},
+    },
+    {
+      name: "GATEKEEPER_CUSTOM",
+      type: "service",
+      service: "custom",
+      entrypoint: "GatekeeperVendor",
+    },
+  ]}};
+  assert.doesNotThrow(() => verifyExistingWorkshopIdentity(version, workshopConfig));
+  version.resources.bindings[1].text = "changed";
+  assert.throws(
+    () => verifyExistingWorkshopIdentity(version, workshopConfig),
+    /variable identity does not match/,
+  );
+  version.resources.bindings[1].text = "https://access.example.invalid";
+  version.resources.bindings[4].service = "other";
+  assert.throws(
+    () => verifyExistingWorkshopIdentity(version, workshopConfig),
+    /service identity does not match/,
+  );
+});
+
+test("verifies WWWK SQLite Durable Object exports from the live version", () => {
+  const version = {resources: {script_runtime: {exports: {
+    WwwkLibrary: {type: "durable-object", storage: "sqlite"},
+    WwwkGatekeeper: {type: "durable-object", storage: "sqlite", state: "created"},
+  }}}};
+  assert.doesNotThrow(() => verifyWwwkDurableObjectIdentity(version));
+  delete version.resources.script_runtime.exports.WwwkGatekeeper;
+  assert.throws(() => verifyWwwkDurableObjectIdentity(version), /WwwkGatekeeper/);
+  version.resources.script_runtime.exports.WwwkGatekeeper = {
+    type: "durable-object",
+    storage: "legacy-kv",
+  };
+  assert.throws(() => verifyWwwkDurableObjectIdentity(version), /WwwkGatekeeper/);
+  version.resources.script_runtime.exports = [
+    ["WwwkLibrary", {type: "durable-object", storage: "sqlite"}],
+    ["WwwkLibrary", {type: "durable-object", storage: "sqlite"}],
+  ];
+  assert.throws(() => verifyWwwkDurableObjectIdentity(version), /does not expose/);
 });
 
 test("accepts only the selected WWWK binding while preparing disconnect", () => {
@@ -370,12 +473,27 @@ test("accepts only the selected WWWK binding while preparing disconnect", () => 
     wwwkWorkerName: "wwwk",
     connected: false,
   }).workshop;
-  const version = {resources: {bindings: [{
-    name: "GATEKEEPER_WWWK",
-    service: "wwwk",
-  }]}};
+  const version = {resources: {bindings: [
+    {name: "ADMINS", type: "json", json: ["admin@example.invalid"]},
+    {name: "CF_ACCESS_ISS", type: "plain_text", text: "https://access.example.invalid"},
+    {name: "CF_ACCESS_AUD", type: "plain_text", text: "audience"},
+    {
+      name: "GATEKEEPER_CONTEXT",
+      type: "service",
+      service: "context",
+      entrypoint: "GatekeeperVendor",
+      props: {sharingDomain: "example"},
+    },
+    {
+      name: "GATEKEEPER_CUSTOM",
+      type: "service",
+      service: "custom",
+      entrypoint: "GatekeeperVendor",
+    },
+    {name: "GATEKEEPER_WWWK", type: "service", service: "wwwk"},
+  ]}};
   assert.doesNotThrow(() => verifyExistingWorkshopIdentity(version, disconnected, "wwwk"));
-  version.resources.bindings[0].service = "other";
+  version.resources.bindings[5].service = "other";
   assert.throws(
     () => verifyExistingWorkshopIdentity(version, disconnected, "wwwk"),
     /different owner/,
