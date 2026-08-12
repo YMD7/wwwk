@@ -17,6 +17,7 @@ import test from "node:test";
 
 import {
   createStarterConfigs,
+  createWwwkErasureConfig,
   isMissingWorkerError,
   liveWranglerOptions,
   loadExternalDeploymentConfig,
@@ -26,7 +27,9 @@ import {
   runStarterInstaller,
   verifyExistingWorkshopIdentity,
   verifyWwwkBrokerIdentity,
+  verifyWwwkDeletionTombstones,
   verifyWwwkDurableObjectIdentity,
+  verifyWwwkEraseIdentity,
   withTemporaryWranglerConfigs,
   workshopFrontendBuildOptions,
   writeTemporaryWranglerConfig,
@@ -84,7 +87,7 @@ function temporaryConfigs(value) {
   };
 }
 
-test("parses Starter install and disconnect commands", () => {
+test("parses Starter install, disconnect, and data erasure commands", () => {
   assert.deepEqual(parseArgs([
     "--starter", "/tmp/starter",
     "--wwwk-worker", "my-wwwk",
@@ -104,6 +107,14 @@ test("parses Starter install and disconnect commands", () => {
     "--state-dir", "/tmp/state",
     "--deployment-config", "/tmp/deployment.jsonc",
   ]).command, "disconnect");
+  assert.equal(parseArgs([
+    "erase",
+    "--starter", "/tmp/starter",
+    "--wwwk-worker", "my-wwwk",
+    "--state-dir", "/tmp/state",
+    "--deployment-config", "/tmp/deployment.jsonc",
+    "--apply",
+  ]).command, "erase");
   assert.throws(() => parseArgs(["--starter", "/tmp/starter"]), /require values/);
 });
 
@@ -338,6 +349,24 @@ test("disconnect removes only the reciprocal service bindings", () => {
   assert.deepEqual(disconnected.wwwk.exports, wwwkConfig.exports);
 });
 
+test("creates a deletion-only WWWK Worker config", () => {
+  assert.deepEqual(createWwwkErasureConfig({
+    accountId: "account",
+    workerName: "wwwk",
+  }), {
+    account_id: "account",
+    name: "wwwk",
+    main: "scripts/wwwk-erasure-worker.mjs",
+    compatibility_date: "2026-02-02",
+    compatibility_flags: ["nodejs_compat"],
+    workers_dev: false,
+    exports: {
+      WwwkLibrary: {type: "durable-object", state: "deleted"},
+      WwwkGatekeeper: {type: "durable-object", state: "deleted"},
+    },
+  });
+});
+
 test("rejects invalid Durable Object identity and conflicting Workshop bindings", () => {
   const invalidExports = structuredClone(wwwkConfig);
   invalidExports.exports.WwwkLibrary.storage = "legacy-kv";
@@ -553,6 +582,87 @@ test("accepts an absent WWWK broker and rejects unsafe broker identities", () =>
   assert.throws(
     () => verifyWwwkBrokerIdentity(version, "workshop"),
     /CFOS_SOURCE_ACCESS_BROKER identity/,
+  );
+});
+
+test("requires both sides to be disconnected before WWWK data erasure", () => {
+  const disconnected = createStarterConfigs({
+    workshopConfig,
+    wwwkConfig,
+    accountId: "account",
+    workshopWorkerName: "workshop",
+    wwwkWorkerName: "wwwk",
+    connected: false,
+  });
+  const workshopVersion = {resources: {bindings: [
+    {name: "ADMINS", type: "json", json: ["admin@example.invalid"]},
+    {name: "CF_ACCESS_ISS", type: "plain_text", text: "https://access.example.invalid"},
+    {name: "CF_ACCESS_AUD", type: "plain_text", text: "audience"},
+    {
+      name: "GATEKEEPER_CONTEXT",
+      type: "service",
+      service: "context",
+      entrypoint: "GatekeeperVendor",
+    },
+    {
+      name: "GATEKEEPER_CUSTOM",
+      type: "service",
+      service: "custom",
+      entrypoint: "GatekeeperVendor",
+    },
+  ]}};
+  const wwwkVersion = {resources: {
+    bindings: [],
+    script_runtime: {exports: {
+      WwwkLibrary: {type: "durable-object", storage: "sqlite"},
+      WwwkGatekeeper: {type: "durable-object", storage: "sqlite"},
+    }},
+  }};
+  const options = {
+    workshopVersion,
+    wwwkVersion,
+    workshopConfig: disconnected.workshop,
+    workshopWorkerName: "workshop",
+    wwwkWorkerName: "wwwk",
+  };
+
+  assert.doesNotThrow(() => verifyWwwkEraseIdentity(options));
+  workshopVersion.resources.bindings.push({
+    name: "GATEKEEPER_WWWK",
+    type: "service",
+    service: "wwwk",
+    entrypoint: "GatekeeperVendor",
+  });
+  assert.throws(() => verifyWwwkEraseIdentity(options), /must be disconnected/);
+  workshopVersion.resources.bindings.pop();
+  wwwkVersion.resources.bindings.push({
+    name: "CFOS_SOURCE_ACCESS_BROKER",
+    type: "service",
+    service: "workshop",
+    entrypoint: "SourceAccessBroker",
+  });
+  assert.throws(() => verifyWwwkEraseIdentity(options), /must be disconnected/);
+  wwwkVersion.resources.bindings.pop();
+  wwwkVersion.resources.bindings.push({name: "UNEXPECTED", type: "plain_text", text: "fixture"});
+  assert.throws(() => verifyWwwkEraseIdentity(options), /unexpected resource bindings/);
+  wwwkVersion.resources.bindings.pop();
+  wwwkVersion.resources.script_runtime.exports.Unexpected = {
+    type: "durable-object",
+    storage: "sqlite",
+  };
+  assert.throws(() => verifyWwwkEraseIdentity(options), /unexpected Durable Object exports/);
+});
+
+test("accepts only the two WWWK Durable Object deletion tombstones", () => {
+  const version = {resources: {script_runtime: {exports: {
+    WwwkLibrary: {type: "durable-object", state: "deleted"},
+    WwwkGatekeeper: {type: "durable-object", state: "deleted"},
+  }}}};
+  assert.doesNotThrow(() => verifyWwwkDeletionTombstones(version));
+  version.resources.script_runtime.exports.WwwkGatekeeper.storage = "sqlite";
+  assert.throws(
+    () => verifyWwwkDeletionTombstones(version),
+    /unexpected Durable Object exports/,
   );
 });
 

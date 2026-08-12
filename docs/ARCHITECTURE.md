@@ -595,11 +595,19 @@ Bundle v1 の厳密な YAML スキーマは「ポータブルデータ」に定�
 
 インデックスや履歴ファイルを提供する場合も、再生成可能な補助データとして扱う。
 
+## データ消去境界
+
+- 標準の接続解除はWWWK dataを保持し、完全消去は独立した破壊操作とする。
+- 完全消去は接続解除、対象identity、exportの要否、不可逆性を確認してから実行する。
+- ローカルではWWWKの2つのDurable Object namespaceだけを削除する。
+- Cloudflareでは2つのclassの`deleted` tombstoneを同じWWWK Workerへdeployしてから、
+  依存関係保護を有効にしたままWorkerを削除する。
+- CFOS、ほかのGatekeeper、共有KV / R2、ローカルstate全体は削除しない。
+
 ## 未決定事項
 
 - Agent Skill の自動読込みと更新方式、更新などの追加操作 API
 - installer の最小 CLI、複数 revision への対応、upgrade 自動化
-- WWWK データだけを完全消去する具体的な手順
 - 検索件数の上限、高度な検索方式、UI、LLM、バックグラウンド処理
 - Source 更新を検知する時期と方法
 - Context Library と連携する専用 Adapter

@@ -162,6 +162,13 @@ WWWKの順でdeployする。強制終了または電源断で一時configの削�
 
 対象外: 一般的なデータ保持ポリシー、定期削除、組織向け retention automation。
 
+**結果:** `erase:local`と`erase:starter`を、通常の接続解除から分離した入口として追加した。
+両方とも既定はplan / dry-runだけを行い、`--apply`と完全一致の対話確認がある場合だけ削除する。
+ローカルはWranglerの固定versionで導出したWWWKの2つのDO namespace directoryだけを削除し、
+symbolic linkと接続中の環境を拒否する。Cloudflareは双方向bindingが外れたlive identityを確認し、
+2つのSQLite classの`deleted` tombstoneをdeployした後、依存関係保護付きでWWWK Workerだけを
+削除する。どちらもexportを自動実行せず、CFOS、ほかのGatekeeper、KV、R2、state全体を保持する。
+
 ## 未計画
 
 高度な検索、UI、Source 更新の自動検知、複数 Source の同時取込み、既存 Wiki の自動統合、

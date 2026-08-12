@@ -217,12 +217,47 @@ WWWK Worker、`WwwkLibrary`、portable bundle、WWWK repository は削除しな�
 
 ### データの完全消去
 
-完全消去は、別の明示的な破壊操作とする。実行前に export の要否、対象 Worker、対象
-Durable Object namespace を確認する。CFOS 本体、ほかの Gatekeeper、共有 KV / R2、
-`.wrangler` state 全体を削除してはならない。
+完全消去は接続解除後にだけ実行できる。コマンドは export を行わないため、必要なデータは
+先に別途 export する。削除後の SQLite データを WWWK から回復することはできない。
 
-WWWK データだけを安全に消去する具体的な Cloudflare / ローカル手順は未確定であり、
-installer の接続解除が成立してから別フェーズで実装する。
+ローカルでは、CFOS を停止して `disconnect:local` を完了した後に計画を確認する。
+
+```sh
+pnpm run erase:local -- \
+  --cfos "$CFOS_ROOT" \
+  --state-dir "$STATE_DIR"
+```
+
+削除を実行する場合だけ `--apply` を追加する。CLI は対象path、export、不可逆性を表示し、
+`erase local WWWK` の完全一致を要求する。削除対象は次の2つに限定する。
+
+- `gatekeeper-wwwk-WwwkLibrary` のローカル Durable Object namespace
+- `gatekeeper-wwwk-WwwkGatekeeper` のローカル Durable Object namespace
+
+CFOS、ほかの Gatekeeper、KV、R2、管理metadata、`v3` state全体は保持する。対象または親が
+symbolic linkの場合は削除せず停止する。
+
+Cloudflareでは、`disconnect:starter --apply`を完了した後に計画とWrangler dry-runを確認する。
+
+```sh
+pnpm run erase:starter -- \
+  --starter "$STARTER_ROOT" \
+  --wwwk-worker "$WWWK_WORKER" \
+  --deployment-config "$DEPLOYMENT_CONFIG"
+```
+
+削除を実行する場合だけ `--apply` を追加する。installerは現在のWorkshopに
+`GATEKEEPER_WWWK`がなく、WWWKに`CFOS_SOURCE_ACCESS_BROKER`がないことと、対象WWWKが
+`WwwkLibrary`、`WwwkGatekeeper`のSQLite namespaceを所有することを確認する。その後、対象と
+不可逆性を表示し、`erase $WWWK_WORKER`の完全一致を要求する。
+
+確認後は、2つのclassをコードから外した`deleted` tombstone versionを同じWWWK Workerへ
+deployし、namespaceとデータを削除してからWorkerを削除する。Wranglerの依存関係保護を有効な
+まま使い、`--force`は使用しない。Workshop、ほかのGatekeeper、KV、R2は削除しない。
+
+ローカルは対象directoryがなくなったこと、Cloudflareは対象Workerが存在しないことを確認する。
+どちらも元データの復元機能は提供しない。必要なbundleがある場合に限り、後で再導入してimport
+できる。
 
 ## Upgrade
 

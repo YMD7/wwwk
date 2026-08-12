@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import test from "node:test";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { integrationPaths, parseArgs } from "./local-installer.mjs";
+import {
+  integrationPaths,
+  localWwwkNamespacePaths,
+  parseArgs,
+  removeLocalWwwkData,
+} from "./local-installer.mjs";
 
 test("parses the documented local run command", () => {
   const options = parseArgs([
@@ -31,6 +36,22 @@ test("parses disconnect without changing its state location", () => {
   assert.equal(options.command, "disconnect");
   assert.equal(options.dryRun, true);
   assert.equal(options.stateDir, "/tmp/wwwk-state");
+});
+
+test("parses explicit local data erasure", () => {
+  const options = parseArgs([
+    "erase",
+    "--cfos", "/tmp/cfos",
+    "--state-dir", "/tmp/wwwk-state",
+    "--apply",
+  ]);
+
+  assert.equal(options.command, "erase");
+  assert.equal(options.apply, true);
+  assert.throws(
+    () => parseArgs(["--cfos", "/tmp/cfos", "--state-dir", "/tmp/state", "--apply"]),
+    /only valid for data erasure/,
+  );
 });
 
 test("derives a stable managed worktree outside the state directory", async t => {
@@ -75,4 +96,37 @@ test("rejects a state symlink that resolves into the CFOS checkout", async t => 
     integrationPaths(await realpath(cfosRoot), stateLink),
     /State must be outside the CFOS checkout/,
   );
+});
+
+test("removes only the two local WWWK Durable Object namespaces", async t => {
+  const stateDir = await mkdtemp(join(tmpdir(), "wwwk-local-data-"));
+  t.after(() => rm(stateDir, {recursive: true, force: true}));
+  const canonicalStateDir = await realpath(stateDir);
+  const [library, gatekeeper] = localWwwkNamespacePaths(canonicalStateDir);
+  const otherDurableObject = join(canonicalStateDir, "v3", "do", "other-worker-Object");
+  const kv = join(canonicalStateDir, "v3", "kv", "shared");
+  for (const directory of [library, gatekeeper, otherDurableObject, kv]) {
+    await mkdir(directory, {recursive: true});
+    await writeFile(join(directory, "sentinel"), "fixture");
+  }
+
+  assert.deepEqual(await removeLocalWwwkData(stateDir), [library, gatekeeper]);
+  await assert.rejects(lstat(library), /ENOENT/);
+  await assert.rejects(lstat(gatekeeper), /ENOENT/);
+  await assert.doesNotReject(lstat(otherDurableObject));
+  await assert.doesNotReject(lstat(kv));
+});
+
+test("rejects symlinked local WWWK namespace state", async t => {
+  const root = await mkdtemp(join(tmpdir(), "wwwk-local-data-"));
+  t.after(() => rm(root, {recursive: true, force: true}));
+  const stateDir = join(root, "state");
+  const outside = join(root, "outside");
+  const [library] = localWwwkNamespacePaths(stateDir);
+  await mkdir(join(stateDir, "v3", "do"), {recursive: true});
+  await mkdir(outside);
+  await symlink(outside, library);
+
+  await assert.rejects(removeLocalWwwkData(stateDir), /must be a real directory/);
+  await assert.doesNotReject(lstat(outside));
 });
