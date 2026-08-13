@@ -732,6 +732,9 @@ test("verifies Notion identity without exposing OAuth secret values", () => {
     name: "NotionVerifier",
     handlers: ["hasItemAccess"],
   });
+  version.resources.script.named_handlers.at(-1).handlers = [];
+  assert.throws(() => verifyNotionIdentity(version, config), /NotionVerifier entrypoint/);
+  version.resources.script.named_handlers.at(-1).handlers = ["hasItemAccess"];
   version.resources.bindings.pop();
   assert.deepEqual(
     verifyNotionIdentity(version, config, {requireSecrets: false}),

@@ -36,11 +36,11 @@ const notionClasses = [
   "NotionItemGatekeeperImpl",
   "NotionWorkspaceGatekeeperImpl",
 ];
-const notionEntrypoints = [
-  "GatekeeperUserImpl",
-  "GatekeeperVendor",
-  "NotionVerifier",
-];
+const notionEntrypoints = new Map([
+  ["GatekeeperUserImpl", "describe"],
+  ["GatekeeperVendor", "describe"],
+  ["NotionVerifier", "hasItemAccess"],
+]);
 const notionSecrets = ["CLIENT_ID", "CLIENT_SECRET"];
 const wwwkErasureEntrypoint = "scripts/wwwk-erasure-worker.mjs";
 const officialStarterRemotes = new Set([
@@ -1028,7 +1028,7 @@ export function verifyNotionIdentity(version, notionConfig, {requireSecrets = tr
   if (!Array.isArray(namedHandlers)) {
     fail("Notion Worker version does not expose named handlers.");
   }
-  const expectedNames = [...notionClasses, ...notionEntrypoints].sort();
+  const expectedNames = [...notionClasses, ...notionEntrypoints.keys()].sort();
   const actualNames = namedHandlers.map(handler => handler?.name).sort();
   if (
     actualNames.length !== expectedNames.length ||
@@ -1044,6 +1044,15 @@ export function verifyNotionIdentity(version, notionConfig, {requireSecrets = tr
       entry.handlers[0] !== "class"
     ) {
       fail(`Existing Notion ${name} class identity does not match.`);
+    }
+  }
+  for (const [name, requiredHandler] of notionEntrypoints) {
+    const entry = namedHandlers.find(handler => handler.name === name);
+    if (
+      !Array.isArray(entry?.handlers) ||
+      !entry.handlers.includes(requiredHandler)
+    ) {
+      fail(`Existing Notion ${name} entrypoint identity does not match.`);
     }
   }
   const latestTag = notionConfig.migrations?.at(-1)?.tag;
