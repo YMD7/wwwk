@@ -16,6 +16,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  createNotionIntegration,
   createStarterConfigs,
   createWwwkErasureConfig,
   isMissingWorkerError,
@@ -27,6 +28,7 @@ import {
   run,
   runStarterInstaller,
   verifyExistingWorkshopIdentity,
+  verifyNotionIdentity,
   verifyWwwkBrokerIdentity,
   verifyWwwkDeletionVersion,
   verifyWwwkDurableObjectIdentity,
@@ -91,7 +93,7 @@ function temporaryConfigs(value) {
   };
 }
 
-test("parses Starter bootstrap, install, disconnect, and data erasure commands", () => {
+test("parses Starter bootstrap, install, Notion, disconnect, and data erasure commands", () => {
   assert.deepEqual(parseArgs([
     "--starter", "/tmp/starter",
     "--wwwk-worker", "my-wwwk",
@@ -104,6 +106,13 @@ test("parses Starter bootstrap, install, disconnect, and data erasure commands",
     stateDir: "/tmp/state",
     deploymentConfig: "/tmp/deployment.jsonc",
   });
+  assert.equal(parseArgs([
+    "notion",
+    "--starter", "/tmp/starter",
+    "--wwwk-worker", "my-wwwk",
+    "--state-dir", "/tmp/state",
+    "--deployment-config", "/tmp/deployment.jsonc",
+  ]).command, "notion");
   assert.equal(parseArgs([
     "bootstrap",
     "--starter", "/tmp/starter",
@@ -344,6 +353,83 @@ test("creates reciprocal bindings while preserving SQLite Durable Object exports
   }]);
   assert.deepEqual(connected.wwwk.exports, wwwkConfig.exports);
   assert.equal(workshopConfig.services.length, 2);
+});
+
+test("creates a path-routed Notion Worker and preserves the WWWK connection", () => {
+  const connected = createStarterConfigs({
+    workshopConfig,
+    wwwkConfig,
+    accountId: "account",
+    workshopWorkerName: "workshop",
+    wwwkWorkerName: "wwwk",
+    connected: true,
+  });
+  const notionBase = {
+    main: ".wrangler/validate/src/notion.ts",
+    migrations: [{tag: "v0", new_sqlite_classes: [
+      "UserAccount",
+      "NotionItemGatekeeperImpl",
+      "NotionWorkspaceGatekeeperImpl",
+    ]}],
+  };
+  const result = createNotionIntegration({
+    workshopConfig: connected.workshop,
+    notionConfig: notionBase,
+    deployment: {
+      accountId: "account",
+      workers: {
+        workshop: {name: "workshop", route: {customDomain: "wiki.example.invalid"}},
+        context: {name: "context"},
+        customGatekeeper: {name: "custom"},
+      },
+      wwwk: {notion: {workerName: "notion", zoneName: "example.invalid"}},
+    },
+    wwwkWorkerName: "wwwk",
+  });
+  assert.deepEqual(result.notion.routes, [{
+    pattern: "wiki.example.invalid/gatekeeper/notion/*",
+    zone_name: "example.invalid",
+  }]);
+  assert.deepEqual(result.notion.vars, {
+    BASE_URL: "https://wiki.example.invalid/gatekeeper/notion",
+  });
+  assert.equal(result.notion.workers_dev, false);
+  assert.deepEqual(result.workshop.services.slice(-2).map(service => service.binding), [
+    "GATEKEEPER_WWWK",
+    "GATEKEEPER_NOTION",
+  ]);
+  assert.equal(connected.workshop.services.length, 3);
+});
+
+test("rejects unsafe Notion routing and Worker identities", () => {
+  const notionConfig = {migrations: [{tag: "v0", new_sqlite_classes: [
+    "UserAccount",
+    "NotionItemGatekeeperImpl",
+    "NotionWorkspaceGatekeeperImpl",
+  ]}]};
+  const deployment = {
+    accountId: "account",
+    workers: {
+      workshop: {name: "workshop", route: {customDomain: "wiki.example.invalid"}},
+      context: {name: "context"},
+      customGatekeeper: {name: "custom"},
+    },
+    wwwk: {notion: {workerName: "notion", zoneName: "other.invalid"}},
+  };
+  assert.throws(() => createNotionIntegration({
+    workshopConfig,
+    notionConfig,
+    deployment,
+    wwwkWorkerName: "wwwk",
+  }), /must belong/);
+  deployment.wwwk.notion.zoneName = "example.invalid";
+  deployment.wwwk.notion.workerName = "wwwk";
+  assert.throws(() => createNotionIntegration({
+    workshopConfig,
+    notionConfig,
+    deployment,
+    wwwkWorkerName: "wwwk",
+  }), /must differ/);
 });
 
 test("requires a dedicated WWWK Worker name", () => {
@@ -607,6 +693,50 @@ test("verifies WWWK SQLite Durable Object exports from the live version", () => 
     ["WwwkLibrary", {type: "durable-object", storage: "sqlite"}],
   ];
   assert.throws(() => verifyWwwkDurableObjectIdentity(version), /does not expose/);
+});
+
+test("verifies Notion identity without exposing OAuth secret values", () => {
+  const config = {
+    migrations: [{tag: "v0", new_sqlite_classes: [
+      "UserAccount",
+      "NotionItemGatekeeperImpl",
+      "NotionWorkspaceGatekeeperImpl",
+    ]}],
+    vars: {BASE_URL: "https://wiki.example.invalid/gatekeeper/notion"},
+  };
+  const version = {resources: {
+    bindings: [
+      {name: "BASE_URL", type: "plain_text", text: config.vars.BASE_URL},
+      {name: "CLIENT_ID", type: "secret_text"},
+      {name: "CLIENT_SECRET", type: "secret_text"},
+    ],
+    script_runtime: {
+      migration_tag: "v0",
+      exports: {
+        default: {type: "worker"},
+        UserAccount: {type: "durable-object", storage: "sqlite"},
+        NotionItemGatekeeperImpl: {type: "durable-object", storage: "sqlite"},
+        NotionWorkspaceGatekeeperImpl: {
+          type: "durable-object",
+          storage: "sqlite",
+          state: "created",
+        },
+      },
+    },
+  }};
+  assert.deepEqual(verifyNotionIdentity(version, config), []);
+  version.resources.bindings.pop();
+  assert.deepEqual(
+    verifyNotionIdentity(version, config, {requireSecrets: false}),
+    ["CLIENT_SECRET"],
+  );
+  assert.throws(() => verifyNotionIdentity(version, config), /missing required OAuth secrets/);
+  version.resources.bindings.push({
+    name: "CLIENT_SECRET",
+    type: "plain_text",
+    text: "not-a-secret-binding",
+  });
+  assert.throws(() => verifyNotionIdentity(version, config), /must be a secret binding/);
 });
 
 test("accepts an absent WWWK broker and rejects unsafe broker identities", () => {

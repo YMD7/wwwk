@@ -14,6 +14,8 @@ worktree と Wrangler state を置く。
   適用してから`pnpm install --frozen-lockfile`する。
 - `patches/cfos-8b08672-local-persist.patch` は固定 CFOS runner に絶対
   `--persist-to` を渡す最小の local-only patchである。
+- `patches/cfos-8b08672-browser-type-suppression.patch` はNode型が存在する統合workspaceでも
+  Workshop frontendの既存testをbuildできるよう、2つの型抑止を安定化する互換patchである。
 - `compatibility/cfos-8b08672-wwwk.pnpm-lock.yaml` はCFOSへWWWK packageを追加した統合後の
   lockfileであり、local installerはこれを使ってfrozen installする。
 
@@ -35,3 +37,7 @@ tracked fixtureだけをgenerated configへ書く。`--apply`では実値をOS�
 既存fileは再利用せず、repository、integration worktree、managed state、永続・配布・追跡される
 artifact、ログへ実値を残さない。live runnerはWranglerのdisk logも無効化する。強制終了または電源断での
 削除は保証できない。
+
+本番のLinked Notion Sourceは、固定CFOSに含まれる`gatekeeper-notion`を利用する。installerは
+外部configの非秘密設定から専用path RouteとWorkshop service bindingを生成し、OAuth client情報は
+Wranglerの対話的なsecret登録だけで受け取る。secret値はcompatibility artifactへ含めない。

@@ -147,6 +147,11 @@ fixtureで生成設定、build、Wrangler dry-runを行う。`--apply`は実値�
 WWWKの順でdeployする。強制終了または電源断で一時configの削除は保証できない。実環境の受入確認は
 完了条件として残す。
 
+本番のLinked Source受入確認に必要なNotion Gatekeeperは、外部configの非秘密設定から専用の
+path RouteとWorkshop bindingを生成する。`install:notion-starter`はNotion Workerをdeployし、
+OAuth client情報をWranglerの対話的なsecret登録だけで受け取る。通常のinstall、disconnect、
+eraseも設定済みNotion bindingを保持する。
+
 新規環境の前提となる基底deploymentには`bootstrap:starter`を追加した。すべての対象Worker名が
 versionを含めて未使用で、保存資源identityが明示された場合だけ、owner-only一時config、完全一致の
 対話確認、strict deployを使い、公式Starterと同じ順序でdeployする。WWWKのdeployと接続、

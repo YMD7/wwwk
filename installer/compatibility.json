@@ -10,6 +10,7 @@
     "companionRevision": "7964294",
     "patch": "patches/cfos-8b08672-7964294.patch",
     "disconnectPatch": "patches/cfos-8b08672-dormant-unbound-ambient.patch",
+    "browserTypePatch": "patches/cfos-8b08672-browser-type-suppression.patch",
     "lockfile": "compatibility/cfos-8b08672-wwwk.pnpm-lock.yaml",
     "localPatch": "patches/cfos-8b08672-local-persist.patch"
   },
