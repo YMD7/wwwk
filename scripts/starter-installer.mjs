@@ -31,6 +31,12 @@ const fixtureDeploymentPath = join(
   "starter-deployment.jsonc",
 );
 const wwwkClasses = ["WwwkLibrary", "WwwkGatekeeper"];
+const notionClasses = [
+  "UserAccount",
+  "NotionItemGatekeeperImpl",
+  "NotionWorkspaceGatekeeperImpl",
+];
+const notionSecrets = ["CLIENT_ID", "CLIENT_SECRET"];
 const wwwkErasureEntrypoint = "scripts/wwwk-erasure-worker.mjs";
 const officialStarterRemotes = new Set([
   "https://github.com/cloudflare/cloudflare-os-starter.git",
@@ -158,7 +164,7 @@ function validateWorkerName(value) {
 export function parseArgs(argv) {
   const values = [...argv];
   const options = {command: "install", stateDir: defaultStateDir()};
-  if (["bootstrap", "disconnect", "erase"].includes(values[0])) {
+  if (["bootstrap", "disconnect", "erase", "notion"].includes(values[0])) {
     options.command = values.shift();
   }
   if (values[0] === "--") values.shift();
@@ -456,6 +462,72 @@ export function createStarterConfigs({
   return {workshop, wwwk};
 }
 
+function validateHostname(value, label) {
+  const hostnamePattern = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+  if (typeof value !== "string" || !hostnamePattern.test(value)) {
+    fail(`${label} must be a lowercase hostname.`);
+  }
+}
+
+export function createNotionIntegration({
+  workshopConfig,
+  notionConfig,
+  deployment,
+  wwwkWorkerName,
+}) {
+  const settings = deployment.wwwk?.notion;
+  if (settings === undefined) return {workshop: workshopConfig};
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
+    fail("wwwk.notion must be an object when present.");
+  }
+  validateWorkerName(settings.workerName);
+  validateHostname(settings.zoneName, "wwwk.notion.zoneName");
+  const hostname = deployment.workers?.workshop?.route?.customDomain;
+  validateHostname(hostname, "Workshop customDomain for Notion");
+  if (hostname !== settings.zoneName && !hostname.endsWith(`.${settings.zoneName}`)) {
+    fail("Workshop customDomain must belong to wwwk.notion.zoneName.");
+  }
+  const reservedNames = [
+    ...Object.values(deployment.workers ?? {}).map(worker => worker?.name),
+    wwwkWorkerName,
+  ];
+  if (reservedNames.includes(settings.workerName)) {
+    fail("Notion Worker name must differ from every Starter and WWWK Worker name.");
+  }
+  if (!notionConfig || !Array.isArray(notionConfig.migrations)) {
+    fail("Notion base config must contain Durable Object migrations.");
+  }
+  const expectedClasses = notionConfig.migrations.flatMap(
+    migration => migration.new_sqlite_classes ?? [],
+  );
+  if (
+    expectedClasses.length !== notionClasses.length ||
+    [...expectedClasses].sort().some((name, index) =>
+      name !== [...notionClasses].sort()[index])
+  ) {
+    fail("Notion base config has an unexpected Durable Object identity.");
+  }
+  if (workshopConfig.services.some(service => service.binding === "GATEKEEPER_NOTION")) {
+    fail("Workshop base config already contains GATEKEEPER_NOTION.");
+  }
+  const notion = structuredClone(notionConfig);
+  notion.account_id = deployment.accountId;
+  notion.name = settings.workerName;
+  notion.workers_dev = false;
+  notion.routes = [{
+    pattern: `${hostname}/gatekeeper/notion/*`,
+    zone_name: settings.zoneName,
+  }];
+  notion.vars = {BASE_URL: `https://${hostname}/gatekeeper/notion`};
+  const workshop = structuredClone(workshopConfig);
+  workshop.services.push({
+    binding: "GATEKEEPER_NOTION",
+    service: settings.workerName,
+    entrypoint: "GatekeeperVendor",
+  });
+  return {workshop, notion};
+}
+
 export function createWwwkErasureConfig({accountId, workerName}) {
   if (typeof accountId !== "string" || !accountId) fail("Starter account is invalid.");
   validateWorkerName(workerName);
@@ -486,6 +558,7 @@ async function prepareIntegration(starterRoot, paths) {
   await applyPatch(paths.integrationPath, compatibility.starter.patch);
   await applyPatch(cfosRoot, compatibility.cfos.patch);
   await applyPatch(cfosRoot, compatibility.cfos.disconnectPatch);
+  await applyPatch(cfosRoot, compatibility.cfos.browserTypePatch);
   await materializeRuntime(paths.integrationPath);
   await applyPatch(cfosRoot, compatibility.wwwk.patch);
   await writeFile(
@@ -501,7 +574,14 @@ async function prepareIntegration(starterRoot, paths) {
   return cfosRoot;
 }
 
-async function generatedConfigs(integrationPath, cfosRoot, deployment, wwwkWorker, connected) {
+async function generatedConfigs(
+  integrationPath,
+  cfosRoot,
+  deployment,
+  wwwkWorker,
+  connected,
+  includeNotion,
+) {
   const deploy = await import(pathToFileURL(join(integrationPath, "scripts", "deploy.mjs")).href);
   deploy.validateConfig(deployment);
   validateWwwkWorkerName(deployment, wwwkWorker);
@@ -521,7 +601,23 @@ async function generatedConfigs(integrationPath, cfosRoot, deployment, wwwkWorke
     wwwkWorkerName: wwwkWorker,
     connected,
   });
-  return {deployment, starter: {...starter, workshop: pair.workshop}, wwwk: pair.wwwk};
+  const notionBase = !includeNotion || deployment.wwwk?.notion === undefined
+    ? undefined
+    : await readJsonc(join(cfosRoot, "packages", "gatekeeper-notion", "wrangler.jsonc"));
+  const notion = createNotionIntegration({
+    workshopConfig: pair.workshop,
+    notionConfig: notionBase,
+    deployment: includeNotion
+      ? deployment
+      : {...deployment, wwwk: undefined},
+    wwwkWorkerName: wwwkWorker,
+  });
+  return {
+    deployment,
+    starter: {...starter, workshop: notion.workshop},
+    wwwk: pair.wwwk,
+    ...(notion.notion && {notion: notion.notion}),
+  };
 }
 
 export function validateWwwkWorkerName(deployment, wwwkWorker) {
@@ -554,6 +650,7 @@ function configEntries(configs) {
   if (configs.starter?.errorReporter) {
     entries.push(["error-reporter", configs.starter.errorReporter]);
   }
+  if (configs.notion) entries.push(["notion", configs.notion]);
   if (configs.erasure) entries.push(["wwwk-erasure", configs.erasure]);
   return entries;
 }
@@ -663,6 +760,9 @@ async function writeGeneratedConfigs(integrationPath, cfosRoot, configs) {
   if (configs.starter.errorReporter) {
     files.push([join(integrationPath, "packages", "error-reporter"), configs.starter.errorReporter]);
   }
+  if (configs.notion) {
+    files.push([join(cfosRoot, "packages", "gatekeeper-notion"), configs.notion]);
+  }
   await Promise.all(files.map(([directory, config]) =>
     writeFile(generatedPath(directory), `${JSON.stringify(config, null, 2)}\n`)));
   return files.map(([directory]) => directory);
@@ -680,7 +780,7 @@ export function workshopFrontendBuildOptions(cfosRoot) {
   };
 }
 
-async function buildAndDryRun(integrationPath, cfosRoot, directories) {
+async function buildAndDryRun(integrationPath, cfosRoot, directories, configs) {
   await run("pnpm", ["--filter", "@gadgets/gatekeeper-context", "build"], {cwd: cfosRoot, stdio: "inherit"});
   await run("pnpm", ["--dir", "packages/custom-gatekeeper", "run", "build"], {cwd: integrationPath, stdio: "inherit"});
   await run(
@@ -690,6 +790,12 @@ async function buildAndDryRun(integrationPath, cfosRoot, directories) {
   );
   await run("pnpm", ["--filter", "@gadgets/workshop-backend", "build"], {cwd: cfosRoot, stdio: "inherit"});
   await run("pnpm", ["run", "build"], {cwd: join(cfosRoot, "packages", "gatekeeper-wwwk"), stdio: "inherit"});
+  if (configs.notion) {
+    await run("pnpm", ["--filter", "@gadgets/notion-gatekeeper", "build"], {
+      cwd: cfosRoot,
+      stdio: "inherit",
+    });
+  }
   for (const directory of directories) {
     await run("pnpm", ["exec", "wrangler", "deploy", "--config", generatedPath(directory), "--dry-run"], {
       cwd: directory,
@@ -912,6 +1018,62 @@ export function verifyWwwkDurableObjectIdentity(version) {
   }
 }
 
+export function verifyNotionIdentity(version, notionConfig, {requireSecrets = true} = {}) {
+  const exports = version?.resources?.script_runtime?.exports;
+  if (!exports || typeof exports !== "object" || Array.isArray(exports)) {
+    fail("Notion Worker version does not expose Durable Object exports.");
+  }
+  const durableObjectNames = Object.entries(exports)
+    .filter(([, entry]) => entry?.type === "durable-object")
+    .map(([name]) => name)
+    .sort();
+  if (
+    durableObjectNames.length !== notionClasses.length ||
+    durableObjectNames.some((name, index) => name !== [...notionClasses].sort()[index])
+  ) {
+    fail("Existing Notion Durable Object export identity does not match.");
+  }
+  for (const name of notionClasses) {
+    const entry = exports[name];
+    if (
+      entry.storage !== "sqlite" ||
+      (entry.state !== undefined && entry.state !== "created")
+    ) {
+      fail(`Existing Notion ${name} Durable Object export identity does not match.`);
+    }
+  }
+  const latestTag = notionConfig.migrations?.at(-1)?.tag;
+  if (
+    typeof latestTag !== "string" ||
+    !latestTag ||
+    version.resources.script_runtime.migration_tag !== latestTag
+  ) {
+    fail("Existing Notion Durable Object migration identity does not match.");
+  }
+  const bindings = resourceBindings(version);
+  const allowed = new Set(["BASE_URL", ...notionSecrets]);
+  if (bindings.some(binding => !allowed.has(binding.name))) {
+    fail("Existing Notion Worker has unexpected resource bindings.");
+  }
+  const baseUrl = namedBinding(bindings, "BASE_URL");
+  if (baseUrl.type !== "plain_text" || baseUrl.text !== notionConfig.vars.BASE_URL) {
+    fail("Existing Notion BASE_URL identity does not match.");
+  }
+  const missingSecrets = [];
+  for (const name of notionSecrets) {
+    const matches = bindings.filter(binding => binding.name === name);
+    if (matches.length === 0) {
+      missingSecrets.push(name);
+    } else if (matches.length !== 1 || matches[0].type !== "secret_text") {
+      fail(`Existing Notion ${name} must be a secret binding.`);
+    }
+  }
+  if (requireSecrets && missingSecrets.length > 0) {
+    fail("Existing Notion Worker is missing required OAuth secrets.");
+  }
+  return missingSecrets;
+}
+
 export function verifyWwwkBrokerIdentity(version, workshopWorkerName) {
   const brokers = resourceBindings(version).filter(
     binding => binding.name === "CFOS_SOURCE_ACCESS_BROKER",
@@ -1012,6 +1174,14 @@ async function deploy(directory, configPath, {strict = false} = {}) {
   );
 }
 
+async function putSecret(directory, configPath, name) {
+  await run(
+    "pnpm",
+    ["exec", "wrangler", "secret", "put", name, "--config", configPath],
+    {...liveWranglerOptions(directory), stdio: "inherit"},
+  );
+}
+
 async function deleteWorker(directory, workerName, configPath) {
   await run(
     "pnpm",
@@ -1049,6 +1219,149 @@ async function confirmStarterBootstrap(workerName, input = process.stdin, output
   } finally {
     readline.close();
   }
+}
+
+async function confirmNotionInstall(workerName, input = process.stdin, output = process.stdout) {
+  if (!input.isTTY || !output.isTTY) {
+    fail("Notion installation requires an interactive confirmation.");
+  }
+  const expected = `install ${workerName}`;
+  const readline = createInterface({input, output});
+  try {
+    const answer = await readline.question(`Type \"${expected}\" to continue: `);
+    if (answer.trim() !== expected) fail("Notion installation was not confirmed.");
+  } finally {
+    readline.close();
+  }
+}
+
+function workshopWithoutNotion(workshopConfig) {
+  const workshop = structuredClone(workshopConfig);
+  workshop.services = workshop.services.filter(
+    service => service.binding !== "GATEKEEPER_NOTION",
+  );
+  return workshop;
+}
+
+function verifyNotionWorkshopState(version, workshopConfig, wwwkWorkerName) {
+  const bindings = resourceBindings(version).filter(
+    binding => binding.name === "GATEKEEPER_NOTION",
+  );
+  if (bindings.length > 1) fail("Existing Workshop has duplicate GATEKEEPER_NOTION bindings.");
+  const currentConfig = bindings.length === 0
+    ? workshopWithoutNotion(workshopConfig)
+    : workshopConfig;
+  verifyExistingWorkshopIdentity(version, currentConfig, wwwkWorkerName);
+  const expectedWwwk = workshopConfig.services.find(
+    service => service.binding === "GATEKEEPER_WWWK",
+  );
+  const actualWwwk = resourceBindings(version).filter(
+    binding => binding.name === "GATEKEEPER_WWWK",
+  );
+  if (
+    !expectedWwwk ||
+    actualWwwk.length !== 1 ||
+    actualWwwk[0].type !== "service" ||
+    actualWwwk[0].service !== expectedWwwk.service ||
+    actualWwwk[0].entrypoint !== expectedWwwk.entrypoint ||
+    serviceEnvironment(actualWwwk[0]) !== "production"
+  ) {
+    fail("WWWK must be connected before installing the Notion Gatekeeper.");
+  }
+  return bindings.length === 1;
+}
+
+async function deployNotionLive(configs, cfosRoot) {
+  if (!configs.notion) fail("External deployment config must define wwwk.notion.");
+  const directories = {
+    workshop: join(cfosRoot, "packages", "workshop-backend"),
+    notion: join(cfosRoot, "packages", "gatekeeper-notion"),
+  };
+  return withTemporaryWranglerConfigs({
+    starter: {workshop: configs.starter.workshop},
+    notion: configs.notion,
+  }, async ({configPaths}) => {
+    const inspect = async () => {
+      const workshop = await currentWorkerVersion(
+        directories.workshop,
+        configs.deployment.workers.workshop.name,
+        configPaths.workshop,
+      );
+      if (!workshop) fail("Baseline Starter deploy cannot be identified.");
+      const workshopConnected = verifyNotionWorkshopState(
+        workshop,
+        configs.starter.workshop,
+        configs.wwwk.name,
+      );
+      const notion = await currentWorkerVersion(
+        directories.notion,
+        configs.notion.name,
+        configPaths.notion,
+      );
+      if (!notion && await workerNameInUse(
+        directories.notion,
+        configs.notion.name,
+        configPaths.notion,
+      )) {
+        fail("Notion Worker name is already in use without a production deployment.");
+      }
+      const missingSecrets = notion
+        ? verifyNotionIdentity(notion, configs.notion, {requireSecrets: false})
+        : [...notionSecrets];
+      return {workshopConnected, notionExists: Boolean(notion), missingSecrets};
+    };
+
+    await inspect();
+    console.log("Notion Gatekeeper installation plan");
+    console.log(`- Worker: ${configs.notion.name}`);
+    console.log(`- OAuth redirect: ${configs.notion.vars.BASE_URL}/oauth`);
+    console.log("- deploy the Notion Worker on the dedicated path route");
+    console.log("- prompt for CLIENT_ID and CLIENT_SECRET without storing their values");
+    console.log("- connect Workshop through GATEKEEPER_NOTION");
+    console.log("- preserve WWWK, Starter Workers, Durable Objects, KV, and R2");
+    await confirmNotionInstall(configs.notion.name);
+
+    const before = await inspect();
+    await deploy(directories.notion, configPaths.notion, {strict: !before.notionExists});
+    let notion = await currentWorkerVersion(
+      directories.notion,
+      configs.notion.name,
+      configPaths.notion,
+    );
+    if (!notion) fail("Notion Worker cannot be identified after deploy.");
+    const missingSecrets = verifyNotionIdentity(
+      notion,
+      configs.notion,
+      {requireSecrets: false},
+    );
+    for (const name of missingSecrets) {
+      console.log(`Configure Notion OAuth secret ${name}.`);
+      await putSecret(directories.notion, configPaths.notion, name);
+    }
+    notion = await currentWorkerVersion(
+      directories.notion,
+      configs.notion.name,
+      configPaths.notion,
+    );
+    if (!notion) fail("Notion Worker cannot be identified after secret configuration.");
+    verifyNotionIdentity(notion, configs.notion);
+    if (!before.workshopConnected) {
+      await deploy(directories.workshop, configPaths.workshop);
+    }
+    const workshop = await currentWorkerVersion(
+      directories.workshop,
+      configs.deployment.workers.workshop.name,
+      configPaths.workshop,
+    );
+    if (!workshop) fail("Workshop cannot be identified after Notion installation.");
+    if (!verifyNotionWorkshopState(
+      workshop,
+      configs.starter.workshop,
+      configs.wwwk.name,
+    )) {
+      fail("Workshop did not retain GATEKEEPER_NOTION after deploy.");
+    }
+  }, {sourceDirectories: directories});
 }
 
 async function deployStarterBootstrap(configs, cfosRoot) {
@@ -1241,6 +1554,16 @@ function printPlan(command, apply, wwwkWorker) {
       : "- no Cloudflare API read or resource change is performed");
     return;
   }
+  if (command === "notion") {
+    console.log("Starter Notion Gatekeeper plan");
+    console.log("- validate the optional wwwk.notion deployment settings");
+    console.log("- build and dry-run Notion, Workshop, and the existing WWWK integration");
+    console.log("- OAuth credential values are never accepted as arguments or written to artifacts");
+    console.log(apply
+      ? "- live identity verification and exact interactive confirmation are still required"
+      : "- no Cloudflare API read, secret update, route update, or deploy is performed");
+    return;
+  }
   const phase = command === "install" ? "connect" : "disconnect";
   console.log(`Starter installer plan (${phase})`);
   console.log("- external deployment config validated without copying its values");
@@ -1272,7 +1595,8 @@ export async function runStarterInstaller(options) {
   }
   await verifyState(starterRoot, paths);
   const cfosRoot = await prepareIntegration(starterRoot, paths);
-  const connected = options.command === "install";
+  const connected = options.command === "install" || options.command === "notion";
+  const includeNotion = options.command !== "bootstrap";
   let directories = [];
   try {
     const liveConfigs = await generatedConfigs(
@@ -1281,17 +1605,31 @@ export async function runStarterInstaller(options) {
       deployment,
       options.wwwkWorker,
       connected,
+      includeNotion,
     );
+    if (options.command === "notion" && !liveConfigs.notion) {
+      fail("Notion installation requires wwwk.notion in the external deployment config.");
+    }
     const fixtureDeployment = await readJsonc(
       fixtureDeploymentPath,
       "Starter dry-run fixture",
     );
+    if (liveConfigs.notion) {
+      fixtureDeployment.workers.workshop.route = {
+        customDomain: "wiki.example.invalid",
+      };
+      fixtureDeployment.wwwk = {notion: {
+        workerName: "fixture-notion",
+        zoneName: "example.invalid",
+      }};
+    }
     const fixtureConfigs = await generatedConfigs(
       paths.integrationPath,
       cfosRoot,
       fixtureDeployment,
       "wwwk-fixture",
       connected,
+      includeNotion,
     );
     if (options.command === "erase") {
       liveConfigs.erasure = createWwwkErasureConfig({
@@ -1312,10 +1650,14 @@ export async function runStarterInstaller(options) {
     }
     printPlan(options.command, options.apply, options.wwwkWorker);
     directories = await writeGeneratedConfigs(paths.integrationPath, cfosRoot, fixtureConfigs);
-    await buildAndDryRun(paths.integrationPath, cfosRoot, directories);
+    await buildAndDryRun(paths.integrationPath, cfosRoot, directories, fixtureConfigs);
     if (options.apply) {
       if (options.command === "bootstrap") {
         await deployStarterBootstrap({...liveConfigs, integrationPath: paths.integrationPath}, cfosRoot);
+        return {paths, applied: true};
+      }
+      if (options.command === "notion") {
+        await deployNotionLive(liveConfigs, cfosRoot);
         return {paths, applied: true};
       }
       await deployLive(liveConfigs, cfosRoot, options.command);

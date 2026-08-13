@@ -434,6 +434,7 @@ export async function prepareIntegration({cfos, stateDir, dryRun = false}) {
   ]);
   await applyPatch(cfosRoot, paths.integrationPath, compatibility.cfos.patch);
   await applyPatch(cfosRoot, paths.integrationPath, compatibility.cfos.disconnectPatch);
+  await applyPatch(cfosRoot, paths.integrationPath, compatibility.cfos.browserTypePatch);
   await applyPatch(cfosRoot, paths.integrationPath, compatibility.cfos.localPatch);
   await materializeRuntime(paths.integrationPath);
   await applyPatch(cfosRoot, paths.integrationPath, compatibility.wwwk.patch);

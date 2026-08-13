@@ -1,0 +1,14 @@
+diff --git a/packages/workshop-frontend/src/rpcErrors.test.ts b/packages/workshop-frontend/src/rpcErrors.test.ts
+index 8f90423..3b94983 100644
+--- a/packages/workshop-frontend/src/rpcErrors.test.ts
++++ b/packages/workshop-frontend/src/rpcErrors.test.ts
+@@ -1,7 +1,7 @@
+ // Vitest runs under node, but the src/ tsconfig only has browser types — hence the suppressions.
+-// @ts-expect-error node builtin without @types/node
++// @ts-ignore node builtin may or may not have @types/node in an integrated workspace
+ import { readFileSync } from 'node:fs'
+-// @ts-expect-error node builtin without @types/node
++// @ts-ignore node builtin may or may not have @types/node in an integrated workspace
+ import { createRequire } from 'node:module'
+ import { describe, expect, it, vi } from 'vitest'
+ import { deserialize, serialize } from 'capnweb'

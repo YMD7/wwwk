@@ -82,7 +82,7 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 - リポジトリ直下を単一の `gatekeeper-wwwk` package とし、monorepo 化しない。
 - 手動の symbolic link は開発中の内部手順に限定し、利用者向け導入契約にしない。
 - Session API は `search()`、`read()`、`ingest()` に限定し、未合意の操作を追加しない。
-- UI、OAuth、hooks、background worker は、必要性が確定するまで追加しない。
+- UI、追加のOAuth provider、hooks、background workerは、必要性が確定するまで追加しない。
 
 ## エージェントとの境界
 

@@ -192,6 +192,43 @@ state、ログ、PRへ書かず、dry-runには追跡されたfixtureだけを�
 ない。live runnerはWranglerのdisk logも無効化する。live実行ではidentity確認後にCLIがsecret-freeな
 実行計画を表示し、`y`で明示確認されるまでCloudflareを変更しない。
 
+### Linked Notion Source
+
+Notion PageをLinked Sourceとして使う場合は、外部deployment configへ次の非秘密情報を追加する。
+WorkshopはCustom Domainを使用していなければならない。
+
+```json
+{
+  "wwwk": {
+    "notion": {
+      "workerName": "example-notion-gatekeeper",
+      "zoneName": "example.com"
+    }
+  }
+}
+```
+
+Notionのpublic connectionには、`https://<Workshop Custom Domain>/gatekeeper/notion/oauth`を
+redirect URIとして登録する。Marketplaceへの掲載は不要である。Notion Workerをbuild、dry-run
+する場合は次を実行する。
+
+```sh
+pnpm run install:notion-starter -- \
+  --starter "$STARTER_ROOT" \
+  --wwwk-worker "$WWWK_WORKER" \
+  --deployment-config "$DEPLOYMENT_CONFIG"
+```
+
+`--apply`を付けると、既存WorkshopとWWWKのidentityを確認し、Notion Workerを
+`<Workshop Custom Domain>/gatekeeper/notion/*`のRouteへdeployする。続いてWranglerが
+`CLIENT_ID`と`CLIENT_SECRET`を対話入力で受け取り、どちらもsecret bindingとして登録した後、
+Workshopへ`GATEKEEPER_NOTION`を追加する。値を引数、deployment config、生成物、ログへ保存しない。
+途中で停止した場合はNotion Workerだけが未接続で残ることがある。同じコマンドを再実行すると、
+確認済みのWorkerとsecretを再利用して接続を完了する。
+
+以後の`install:starter`、`disconnect:starter`、`erase:starter`も同じdeployment configを使う。
+これにより、WWWKの接続状態を変えてもNotion bindingを保持する。
+
 新規 Starter は先に基底deploymentを別の明示承認で完了している必要がある。
 
 基底deploymentがない新規環境では、同じ外部configと固定tupleからplan / dry-runを実行する。

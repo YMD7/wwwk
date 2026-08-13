@@ -43,6 +43,11 @@ WWWK は独立した Gatekeeper Worker とし、CFOS から `GATEKEEPER_WWWK` se
 WWWK リポジトリ直下を単一の `gatekeeper-wwwk` package とし、独自の `packages/` 階層や
 monorepo は作らない。
 
+初期Linked SourceであるNotionはCFOSの`gatekeeper-notion`をそのまま利用する。Workshopの
+Custom Domainは維持し、OAuth用の`/gatekeeper/notion/*`だけをNotion Workerの具体的なRouteへ
+割り当てる。Workshopは`GATEKEEPER_NOTION` service bindingで同じWorkerへ接続する。OAuth client
+情報と利用者tokenはWWWKへ渡さず、Notion GatekeeperとCloudflare secretに保持する。
+
 公式 CFOS の公開拡張境界だけでは、Linked Source の stable Broker と共有 Gadget の
 observer 検証を表現できない。installer はこの差分を CFOS の対応 revision 専用 patch として
 一時 worktree へ適用する。利用者へ WWWK 専用の CFOS / Starter fork を要求せず、利用者の
