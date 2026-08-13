@@ -36,6 +36,11 @@ const notionClasses = [
   "NotionItemGatekeeperImpl",
   "NotionWorkspaceGatekeeperImpl",
 ];
+const notionEntrypoints = new Map([
+  ["GatekeeperUserImpl", "describe"],
+  ["GatekeeperVendor", "describe"],
+  ["NotionVerifier", "hasItemAccess"],
+]);
 const notionSecrets = ["CLIENT_ID", "CLIENT_SECRET"];
 const wwwkErasureEntrypoint = "scripts/wwwk-erasure-worker.mjs";
 const officialStarterRemotes = new Set([
@@ -1019,27 +1024,35 @@ export function verifyWwwkDurableObjectIdentity(version) {
 }
 
 export function verifyNotionIdentity(version, notionConfig, {requireSecrets = true} = {}) {
-  const exports = version?.resources?.script_runtime?.exports;
-  if (!exports || typeof exports !== "object" || Array.isArray(exports)) {
-    fail("Notion Worker version does not expose Durable Object exports.");
+  const namedHandlers = version?.resources?.script?.named_handlers;
+  if (!Array.isArray(namedHandlers)) {
+    fail("Notion Worker version does not expose named handlers.");
   }
-  const durableObjectNames = Object.entries(exports)
-    .filter(([, entry]) => entry?.type === "durable-object")
-    .map(([name]) => name)
-    .sort();
+  const expectedNames = [...notionClasses, ...notionEntrypoints.keys()].sort();
+  const actualNames = namedHandlers.map(handler => handler?.name).sort();
   if (
-    durableObjectNames.length !== notionClasses.length ||
-    durableObjectNames.some((name, index) => name !== [...notionClasses].sort()[index])
+    actualNames.length !== expectedNames.length ||
+    actualNames.some((name, index) => name !== expectedNames[index])
   ) {
-    fail("Existing Notion Durable Object export identity does not match.");
+    fail("Existing Notion named handler identity does not match.");
   }
   for (const name of notionClasses) {
-    const entry = exports[name];
+    const entry = namedHandlers.find(handler => handler.name === name);
     if (
-      entry.storage !== "sqlite" ||
-      (entry.state !== undefined && entry.state !== "created")
+      !Array.isArray(entry?.handlers) ||
+      entry.handlers.length !== 1 ||
+      entry.handlers[0] !== "class"
     ) {
-      fail(`Existing Notion ${name} Durable Object export identity does not match.`);
+      fail(`Existing Notion ${name} class identity does not match.`);
+    }
+  }
+  for (const [name, requiredHandler] of notionEntrypoints) {
+    const entry = namedHandlers.find(handler => handler.name === name);
+    if (
+      !Array.isArray(entry?.handlers) ||
+      !entry.handlers.includes(requiredHandler)
+    ) {
+      fail(`Existing Notion ${name} entrypoint identity does not match.`);
     }
   }
   const latestTag = notionConfig.migrations?.at(-1)?.tag;

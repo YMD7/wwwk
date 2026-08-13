@@ -710,21 +710,31 @@ test("verifies Notion identity without exposing OAuth secret values", () => {
       {name: "CLIENT_ID", type: "secret_text"},
       {name: "CLIENT_SECRET", type: "secret_text"},
     ],
-    script_runtime: {
-      migration_tag: "v0",
-      exports: {
-        default: {type: "worker"},
-        UserAccount: {type: "durable-object", storage: "sqlite"},
-        NotionItemGatekeeperImpl: {type: "durable-object", storage: "sqlite"},
-        NotionWorkspaceGatekeeperImpl: {
-          type: "durable-object",
-          storage: "sqlite",
-          state: "created",
-        },
-      },
+    script: {
+      named_handlers: [
+        {name: "UserAccount", handlers: ["class"]},
+        {name: "NotionItemGatekeeperImpl", handlers: ["class"]},
+        {name: "NotionWorkspaceGatekeeperImpl", handlers: ["class"]},
+        {name: "GatekeeperUserImpl", handlers: ["describe"]},
+        {name: "GatekeeperVendor", handlers: ["describe"]},
+        {name: "NotionVerifier", handlers: ["hasItemAccess"]},
+      ],
     },
+    script_runtime: {migration_tag: "v0"},
   }};
   assert.deepEqual(verifyNotionIdentity(version, config), []);
+  version.resources.script.named_handlers[0].handlers = ["fetch"];
+  assert.throws(() => verifyNotionIdentity(version, config), /UserAccount class identity/);
+  version.resources.script.named_handlers[0].handlers = ["class"];
+  version.resources.script.named_handlers.pop();
+  assert.throws(() => verifyNotionIdentity(version, config), /named handler identity/);
+  version.resources.script.named_handlers.push({
+    name: "NotionVerifier",
+    handlers: ["hasItemAccess"],
+  });
+  version.resources.script.named_handlers.at(-1).handlers = [];
+  assert.throws(() => verifyNotionIdentity(version, config), /NotionVerifier entrypoint/);
+  version.resources.script.named_handlers.at(-1).handlers = ["hasItemAccess"];
   version.resources.bindings.pop();
   assert.deepEqual(
     verifyNotionIdentity(version, config, {requireSecrets: false}),
