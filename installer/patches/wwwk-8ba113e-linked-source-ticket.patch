@@ -2,10 +2,15 @@ diff --git a/packages/gatekeeper-wwwk/skills/wwwk/SKILL.md b/packages/gatekeeper
 index 4b72334..c367377 100644
 --- a/packages/gatekeeper-wwwk/skills/wwwk/SKILL.md
 +++ b/packages/gatekeeper-wwwk/skills/wwwk/SKILL.md
-@@ -32,2 +32,3 @@ WWWKは所有者専用の個人Wikiである。利用可能な場合は、一般
+@@ -32,2 +32,8 @@ WWWKは所有者専用の個人Wikiである。利用可能な場合は、一般
 -1. Notion bindingの`$cfosLinkedSourceHandle()`を呼び、CFOS発行のhandleを得る。
 -2. `source: { kind: "linked", sourceHandle }`を`ingest()`へ渡す。
-+1. Notion bindingの`$cfosLinkedSourceHandle()`を呼び、CFOS発行の一回限りticketを得る。
++ここでいうNotion Pageは、CFOSへ直接接続され、個別のbindingとして添付されたPageに限る。
++Notion Workspace bindingや`getPage()`で得たPageではticket発行を試さず、対象Page単体の
++接続を要求する。RPC methodの列挙、存在確認、試行呼出しは行わない。
++
++1. 直接添付されたNotion Page bindingの`$cfosLinkedSourceHandle()`を呼び、CFOS発行の
++   一回限りticketを得る。
 +2. 同じ`executeCode`内で、戻り値を`sourceHandle`として
 +   `source: { kind: "linked", sourceHandle }`へ直接渡す。
 @@ -37 +38,2 @@ WWWKは所有者専用の個人Wikiである。利用可能な場合は、一般
@@ -52,13 +57,14 @@ index a866ba7..13dd4d4 100644
 -        sourceAccessId,
 +        sourceHandle: claimed.sourceHandle,
 +        sourceAccessId: claimed.sourceAccessId,
-@@ -1228 +1231,5 @@ export class WwwkGatekeeper
+@@ -1227,2 +1230,5 @@ export class WwwkGatekeeper
+-        "Use the WWWK session to search private Wiki pages, read their Evidence and Source " +
 -        "inputs, or ingest one explicitly requested text.",
-+        "inputs, or ingest one explicitly requested text. For an attached connected Notion " +
-+        "Page, call its $cfosLinkedSourceHandle() and in the same executeCode pass the returned " +
-+        "one-time value directly as sourceHandle to " +
++        "Search/read WWWK or ingest explicit text. Linked Notion: use only a directly attached " +
++        "Page binding. Given a Workspace or getPage() result, request a direct Page connection; " +
++        "do not probe RPC. In one executeCode call $cfosLinkedSourceHandle(), then " +
 +        "ingest({source:{kind:'linked',sourceHandle},evidence:{title,content}," +
-+        "wiki:{title,content}}); never log, return, or display that value.",
++        "wiki:{title,content}}). Never expose or reuse sourceHandle.",
 diff --git a/packages/gatekeeper-wwwk/src/types.d.ts b/packages/gatekeeper-wwwk/src/types.d.ts
 index b3024bc..993d2ce 100644
 --- a/packages/gatekeeper-wwwk/src/types.d.ts

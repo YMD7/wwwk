@@ -359,12 +359,17 @@ describe("WwwkGatekeeper", () => {
 
     expect(discovery.catalog.entries).toHaveLength(1);
     expect(discovery.catalog.entries[0].id).toBe("wwwk-session");
-    expect(discovery.catalog.entries[0].description).toContain(
+    const description = discovery.catalog.entries[0].description;
+    expect(description.length).toBeLessThanOrEqual(400);
+    expect(description).toContain(
       "$cfosLinkedSourceHandle()",
     );
-    expect(discovery.catalog.entries[0].description).toContain(
+    expect(description).toContain(
       "source:{kind:'linked',sourceHandle}",
     );
+    expect(description).toContain("Given a Workspace or getPage() result");
+    expect(description).toContain("do not probe RPC");
+    expect(description).toContain("Never expose or reuse sourceHandle.");
     expect(discovery.commands).toEqual([expect.objectContaining({
       id: "wwwk",
       name: "wwwk",

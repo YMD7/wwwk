@@ -1227,12 +1227,11 @@ export class WwwkGatekeeper
       id: "wwwk-session",
       title: "WWWK personal Wiki",
       description:
-        "Use the WWWK session to search private Wiki pages, read their Evidence and Source " +
-        "inputs, or ingest one explicitly requested text. For an attached connected Notion " +
-        "Page, call its $cfosLinkedSourceHandle() and in the same executeCode pass the returned " +
-        "one-time value directly as sourceHandle to " +
+        "Search/read WWWK or ingest explicit text. Linked Notion: use only a directly attached " +
+        "Page binding. Given a Workspace or getPage() result, request a direct Page connection; " +
+        "do not probe RPC. In one executeCode call $cfosLinkedSourceHandle(), then " +
         "ingest({source:{kind:'linked',sourceHandle},evidence:{title,content}," +
-        "wiki:{title,content}}); never log, return, or display that value.",
+        "wiki:{title,content}}). Never expose or reuse sourceHandle.",
     }], request);
     if (catalog.entries.length > 0) {
       await authorizer.authorizeObservation({
