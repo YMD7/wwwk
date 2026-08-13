@@ -39,8 +39,9 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 
 - 認証、権限、capability、Gatekeeper、承認、監査を独自実装しない。
 - 外部原典へのアクセスは CFOS の仕組みを利用する。
-- Linked Source には、CFOS が発行する非ポータブルな opaque handle だけを利用する。
-- WWWK は handle を保存して CFOS の stable Broker へ渡す。外部原典の binding、
+- AgentにはCFOS発行の非ポータブル、1回限りかつ短命なopaque ticketだけを
+  渡す。ticketは返値やログへ出さず、同じ実行で`ingest()`へ直接渡す。
+- WWWKはBrokerがticketと交換した内部handleだけを保存する。外部原典のbinding、
   CFOS capability Fetcher、一時的な Gatekeeper Session は保存しない。
 - 一時的な Gatekeeper Session を永続リンクとして保存しない。
 - Linked Source の Session は observation-only とし、action と hook を常に拒否する。
@@ -55,7 +56,8 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
   委ねる。WWWKはverifier、認証情報、capability、Sessionを受け取らない。
 - `sourceAccessId`は非bearer・非ポータブルなopaque IDとし、CFOSの信頼済み対応表は
   Source側OverseerのKVだけに保持する。WWWKはIDを実行時KVにだけ保存できる。
-- `sourceAccessId`、handle、verifier、Session、tokenをSQL、frontmatter、export、Agent結果、
+- ticket、`sourceAccessId`、内部handle、verifier、Session、tokenをSQL、frontmatter、
+  export、Agent結果、
   action/observation descriptionへ含めない。
 - CFOS のセキュリティ境界を迂回する設計を禁止する。
 - `ingest()` は必ず CFOS の approval queue へ送り、初期実装では自動承認を許可しない。

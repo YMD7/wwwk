@@ -14,6 +14,8 @@
 - CFOS のサンドボックス、capability、Gatekeeper、承認、監査に従う。
 - 外部サービスへのアクセスは CFOS の境界を通す。
 - Linked Source は、CFOS が管理する読取専用 capability を通して再認可する。
+- Agentへ永続的なLinked Source capabilityを渡さず、短命かつ1回限りの値と
+  WWWK内部の永続接続を分離する。
 - OAuth トークンなどの認証情報を WWWK に保存しない。
 - WWWK の形式やメタデータをアクセス制御の根拠にしない。
 - 初期スコープでは、Wiki は所有者本人だけが利用できる。

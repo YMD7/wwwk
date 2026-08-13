@@ -34,6 +34,10 @@ WWWK は独立した Gatekeeper Worker であり、Workshop の `GATEKEEPER_WWWK
 公式 CFOS の現行契約だけでは、stable Broker と共有 Gadget の observer 検証を表現できない。
 そのため、installer は WWWK repository で追跡された companion patch を一時 worktree の
 公式 CFOS へ適用する。
+追加patchは、Agent向けの短命かつ1回限りticketと、WWWK内部のstable handleを
+分離するBroker契約も含む。
+Agentへ露出していた旧`cfosls1` handleは移行せずfail-closedで失効させる。
+そのhandleを使う既存Linked Sourceがある場合は、再接続後に取り込み直す。
 
 ```text
 利用者の公式 checkout

@@ -160,9 +160,12 @@ type LinkedSourceDescription = {
 };
 
 type SourceAccessBroker = {
+  claim(sourceTicket: string): Promise<{
+    sourceHandle: string;
+    sourceAccessId: string;
+  } | null>;
   describe(handle: string): Promise<LinkedSourceDescription | null>;
   openReadSession(handle: string): Promise<unknown | null>;
-  registerSourceAccess(handle: string): Promise<string | null>;
 };
 
 type ObservationSources = {
@@ -277,11 +280,13 @@ async function readLinkedNotionSourceWithBroker(
   metadataJson: string;
   linked: Omit<LinkedSourceIngest, "sourceId">;
 }> {
-  if (!input.sourceHandle) throw new Error("Linked source handle is required.");
-  const description = await broker.describe(input.sourceHandle);
+  if (!input.sourceHandle) throw new Error("Linked source ticket is required.");
+  const claimed = await broker.claim(input.sourceHandle);
+  if (!claimed) throw new Error("Linked source ticket is unavailable.");
+  const description = await broker.describe(claimed.sourceHandle);
   if (!description) throw new Error("Linked source handle is unavailable.");
   validateLinkedSourceDescription(description);
-  const opened = await broker.openReadSession(input.sourceHandle);
+  const opened = await broker.openReadSession(claimed.sourceHandle);
   const session = getNotionPageSession(opened);
   try {
     const [metadata, content] = await Promise.all([
@@ -295,8 +300,6 @@ async function readLinkedNotionSourceWithBroker(
       throw new Error("Linked source metadata does not match its description.");
     }
     const revision = toRevision(metadata.lastEditedAt);
-    const sourceAccessId = await broker.registerSourceAccess(input.sourceHandle);
-    if (!sourceAccessId) throw new Error("Linked source access is unavailable.");
     return {
       title: metadata.title,
       content,
@@ -310,8 +313,8 @@ async function readLinkedNotionSourceWithBroker(
         resource: description.url,
         revision,
         tsType: description.tsType,
-        sourceHandle: input.sourceHandle,
-        sourceAccessId,
+        sourceHandle: claimed.sourceHandle,
+        sourceAccessId: claimed.sourceAccessId,
       },
     };
   } finally {
@@ -1225,7 +1228,11 @@ export class WwwkGatekeeper
       title: "WWWK personal Wiki",
       description:
         "Use the WWWK session to search private Wiki pages, read their Evidence and Source " +
-        "inputs, or ingest one explicitly requested text.",
+        "inputs, or ingest one explicitly requested text. For an attached connected Notion " +
+        "Page, call its $cfosLinkedSourceHandle() and in the same executeCode pass the returned " +
+        "one-time value directly as sourceHandle to " +
+        "ingest({source:{kind:'linked',sourceHandle},evidence:{title,content}," +
+        "wiki:{title,content}}); never log, return, or display that value.",
     }], request);
     if (catalog.entries.length > 0) {
       await authorizer.authorizeObservation({
