@@ -485,6 +485,7 @@ async function prepareIntegration(starterRoot, paths) {
   await git(cfosRoot, ["checkout", "--detach", compatibility.cfos.baseRevision]);
   await applyPatch(paths.integrationPath, compatibility.starter.patch);
   await applyPatch(cfosRoot, compatibility.cfos.patch);
+  await applyPatch(cfosRoot, compatibility.cfos.disconnectPatch);
   await materializeRuntime(paths.integrationPath);
   await applyPatch(cfosRoot, compatibility.wwwk.patch);
   await writeFile(

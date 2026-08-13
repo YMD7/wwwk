@@ -9,6 +9,7 @@
     "baseRevision": "8b08672050e6957987a87b5f9cab2801ba89b42c",
     "companionRevision": "7964294",
     "patch": "patches/cfos-8b08672-7964294.patch",
+    "disconnectPatch": "patches/cfos-8b08672-dormant-unbound-ambient.patch",
     "lockfile": "compatibility/cfos-8b08672-wwwk.pnpm-lock.yaml",
     "localPatch": "patches/cfos-8b08672-local-persist.patch"
   },
