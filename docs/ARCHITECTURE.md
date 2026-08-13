@@ -267,9 +267,10 @@ interface SourceAccessBroker {
 }
 ```
 
-- Agentは接続済みNotion bindingの`$cfosLinkedSourceHandle()`からticketを取得し、
-  同じ実行内で`ingest()`の`sourceHandle`へ直接渡す。ticketを返値、会話、
-  Evidence、Wiki、metadata、ログへ出さない。
+- AgentはCFOSへ直接接続されたNotion Page bindingだけからticketを取得する。Notion
+  Workspace bindingや`getPage()`で得たPageは使わず、対象Page単体の接続を要求する。
+- Agentは`$cfosLinkedSourceHandle()`の戻り値を同じ実行内で`ingest()`の
+  `sourceHandle`へ直接渡す。ticketを返値、会話、Evidence、Wiki、metadata、ログへ出さない。
 - ticketは推測不能、非ポータブル、発行から5分で失効、1回限りである。同じ接続から
   新しいticketを発行すると、未使用の旧ticketは失効する。
 - `claim(ticket)`はticketを消費し、Agentへ露出しない内部handleと、observer検証に
