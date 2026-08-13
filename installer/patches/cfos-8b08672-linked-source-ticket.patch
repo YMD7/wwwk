@@ -1,0 +1,314 @@
+diff --git a/packages/workshop-backend/__tests__/source-access.test.ts b/packages/workshop-backend/__tests__/source-access.test.ts
+index 9cf04be..f8c0c0b 100644
+--- a/packages/workshop-backend/__tests__/source-access.test.ts
++++ b/packages/workshop-backend/__tests__/source-access.test.ts
+@@ -17 +17,3 @@ declare module "cloudflare:workers" {
+-const handle = "cfosls1_abcdef_11111111-1111-4111-8111-111111111111";
++const ticket = "cfoslst1_abcdef_11111111-1111-4111-8111-111111111111";
++const handle = "cfoslsi1_abcdef_22222222-2222-4222-8222-222222222222";
++const claimedAccessId = "cfoslsa1_abcdef_33333333-3333-4333-8333-333333333333";
+@@ -19,0 +22,4 @@ function makeBroker(overseer: {
++  claimLinkedSourceTicket: (
++    nonce: string,
++    now: number,
++  ) => Promise<{sourceHandle: string; sourceAccessId: string} | null>;
+@@ -22 +27,0 @@ function makeBroker(overseer: {
+-  registerSourceAccessHandle: (nonce: string) => string | null;
+@@ -42,2 +47,3 @@ describe("Linked Source handles", () => {
+-  it("resolves a registered handle, opens fresh sessions, and rejects revocation", async () => {
+-    const nonce = "11111111-1111-4111-8111-111111111111";
++  it("claims a ticket once, keeps internal handles private, and rejects legacy handles", async () => {
++    const ticketNonce = "11111111-1111-4111-8111-111111111111";
++    const handleNonce = "22222222-2222-4222-8222-222222222222";
+@@ -45 +51 @@ describe("Linked Source handles", () => {
+-      [nonce, {vendorId: "notion"}],
++      [handleNonce, {vendorId: "notion"}],
+@@ -46,0 +53,6 @@ describe("Linked Source handles", () => {
++    let claimable = true;
++    const claimLinkedSourceTicket = vi.fn(async (nonce: string) => {
++      if (nonce !== ticketNonce || !claimable) return null;
++      claimable = false;
++      return {sourceHandle: handle, sourceAccessId: claimedAccessId};
++    });
+@@ -56,5 +67,0 @@ describe("Linked Source handles", () => {
+-    const registerSourceAccessHandle = vi.fn((registeredNonce: string) =>
+-      registrations.has(registeredNonce)
+-        ? "cfoslsa1_abcdef_22222222-2222-4222-8222-222222222222"
+-        : null,
+-    );
+@@ -61,0 +69 @@ describe("Linked Source handles", () => {
++      claimLinkedSourceTicket,
+@@ -64 +71,0 @@ describe("Linked Source handles", () => {
+-      registerSourceAccessHandle,
+@@ -66,0 +74,9 @@ describe("Linked Source handles", () => {
++    await expect(broker.claim(ticket)).resolves.toEqual({
++      sourceHandle: handle,
++      sourceAccessId: claimedAccessId,
++    });
++    await expect(broker.claim(ticket)).resolves.toBeNull();
++    await expect(broker.describe(ticket)).resolves.toBeNull();
++    await expect(broker.describe(
++      "cfosls1_abcdef_22222222-2222-4222-8222-222222222222",
++    )).resolves.toBeNull();
+@@ -70,4 +86,2 @@ describe("Linked Source handles", () => {
+-    await expect(broker.registerSourceAccess(handle)).resolves.toBe(
+-      "cfoslsa1_abcdef_22222222-2222-4222-8222-222222222222",
+-    );
+-    expect(describeLinkedSourceHandle).toHaveBeenCalledWith(nonce);
++    expect(claimLinkedSourceTicket).toHaveBeenCalledWith(ticketNonce, expect.any(Number));
++    expect(describeLinkedSourceHandle).toHaveBeenCalledWith(handleNonce);
+@@ -75,3 +89,2 @@ describe("Linked Source handles", () => {
+-    expect(openLinkedSourceHandle).toHaveBeenNthCalledWith(1, nonce);
+-    expect(openLinkedSourceHandle).toHaveBeenNthCalledWith(2, nonce);
+-    expect(registerSourceAccessHandle).toHaveBeenCalledWith(nonce);
++    expect(openLinkedSourceHandle).toHaveBeenNthCalledWith(1, handleNonce);
++    expect(openLinkedSourceHandle).toHaveBeenNthCalledWith(2, handleNonce);
+@@ -79 +92 @@ describe("Linked Source handles", () => {
+-    registrations.delete(nonce);
++    registrations.delete(handleNonce);
+@@ -82 +94,0 @@ describe("Linked Source handles", () => {
+-    await expect(broker.registerSourceAccess(handle)).resolves.toBeNull();
+@@ -117,0 +130,5 @@ type TestOverseer = {
++    createLinkedSourceTicket(gatekeeperId: number): string;
++    claimLinkedSourceTicket(
++      nonce: string,
++      now: number,
++    ): {sourceHandle: string; sourceAccessId: string} | null;
+@@ -159,0 +177,44 @@ async function inTestOverseer(
++describe("Linked Source ticket storage", () => {
++  it("keeps one short-lived ticket per gatekeeper and consumes it atomically", async () => {
++    await inTestOverseer("linked-source-ticket", async impl => {
++      const gatekeeperId = 31;
++      impl.storage.gatekeepers.put(gatekeeperRecord(gatekeeperId, "notion"));
++      impl.ctx.storage.kv.put(
++        `linkedSourceHandleForGatekeeper:${gatekeeperId}`,
++        "44444444-4444-4444-8444-444444444444",
++      );
++      impl.ctx.storage.kv.put(
++        "linkedSourceHandle:44444444-4444-4444-8444-444444444444",
++        gatekeeperId,
++      );
++
++      const first = impl.createLinkedSourceTicket(gatekeeperId);
++      const second = impl.createLinkedSourceTicket(gatekeeperId);
++      const firstNonce = first.split("_").at(-1)!;
++      const secondNonce = second.split("_").at(-1)!;
++      expect(first).toMatch(/^cfoslst1_/);
++      expect(second).not.toBe(first);
++      expect(impl.claimLinkedSourceTicket(firstNonce, Date.now())).toBeNull();
++
++      const claimed = impl.claimLinkedSourceTicket(secondNonce, Date.now());
++      expect(claimed).toEqual({
++        sourceHandle: expect.stringMatching(/^cfoslsi1_/),
++        sourceAccessId: expect.stringMatching(/^cfoslsa1_/),
++      });
++      expect(impl.claimLinkedSourceTicket(secondNonce, Date.now())).toBeNull();
++      expect(impl.ctx.storage.kv.get(
++        `linkedSourceHandleForGatekeeper:${gatekeeperId}`,
++      )).toBeUndefined();
++      expect(impl.ctx.storage.kv.get(
++        "linkedSourceHandle:44444444-4444-4444-8444-444444444444",
++      )).toBeUndefined();
++
++      const expired = impl.createLinkedSourceTicket(gatekeeperId);
++      expect(impl.claimLinkedSourceTicket(
++        expired.split("_").at(-1)!,
++        Number.MAX_SAFE_INTEGER,
++      )).toBeNull();
++    });
++  });
++});
++
+diff --git a/packages/workshop-backend/src/overseer.ts b/packages/workshop-backend/src/overseer.ts
+index f20f3a9..3ef82e5 100644
+--- a/packages/workshop-backend/src/overseer.ts
++++ b/packages/workshop-backend/src/overseer.ts
+@@ -4 +4 @@ import { Overseer, GadgetMetadata, UiBundle, WorkpieceId, WorkpieceSummary, Work
+-import { Gatekeeper, HookInitiator, ResourceDescription, ApprovalQueue, ActionDescription, ObservationAuthorizer, ObservationDescription, VendorDescription, SupportedResource, resolveRequestedResource, HookController, HookDescription, AGENT_CATALOG_MAX_ENTRIES, ActionKind, type SourceAccessBroker as SourceAccessBrokerContract, type LinkedSourceDescription } from "@gadgets/workshop-shared/gatekeeper";
++import { Gatekeeper, HookInitiator, ResourceDescription, ApprovalQueue, ActionDescription, ObservationAuthorizer, ObservationDescription, VendorDescription, SupportedResource, resolveRequestedResource, HookController, HookDescription, AGENT_CATALOG_MAX_ENTRIES, ActionKind, type SourceAccessBroker as SourceAccessBrokerContract, type LinkedSourceDescription, type ClaimedLinkedSource } from "@gadgets/workshop-shared/gatekeeper";
+@@ -50,0 +51 @@ export const AGENT_RUNNING_ERROR_MESSAGE = "Agent is running, wait for it to fin
++const LINKED_SOURCE_TICKET_TTL_MS = 5 * 60 * 1000;
+@@ -2647 +2648 @@ class OverseerImpl implements AgentHooks {
+-  createLinkedSourceHandle(gatekeeperId: WorkpieceId): string {
++  createLinkedSourceTicket(gatekeeperId: WorkpieceId): string {
+@@ -2651,4 +2652,14 @@ class OverseerImpl implements AgentHooks {
+-    const gatekeeperKey = `linkedSourceHandleForGatekeeper:${gatekeeperId}`;
+-    let nonce = this.ctx.storage.kv.get<string>(gatekeeperKey);
+-    if (!nonce) {
+-      nonce = crypto.randomUUID();
++    return this.ctx.storage.transactionSync(() => {
++      const gatekeeperKey = `linkedSourceTicketForGatekeeper:${gatekeeperId}`;
++      const previous = this.ctx.storage.kv.get<string>(gatekeeperKey);
++      if (previous) this.ctx.storage.kv.delete(`linkedSourceTicket:${previous}`);
++
++      // v1でAgentへ露出したstable handleを保存側でも失効させる。
++      const legacy = this.ctx.storage.kv.get<string>(
++          `linkedSourceHandleForGatekeeper:${gatekeeperId}`);
++      if (legacy) {
++        this.ctx.storage.kv.delete(`linkedSourceHandle:${legacy}`);
++        this.ctx.storage.kv.delete(`linkedSourceHandleForGatekeeper:${gatekeeperId}`);
++      }
++
++      const nonce = crypto.randomUUID();
+@@ -2656,3 +2667,48 @@ class OverseerImpl implements AgentHooks {
+-      this.ctx.storage.kv.put(`linkedSourceHandle:${nonce}`, gatekeeperId);
+-    }
+-    return `cfosls1_${this.ctx.id.toString()}_${nonce}`;
++      this.ctx.storage.kv.put(`linkedSourceTicket:${nonce}`, {
++        gatekeeperId,
++        expiresAt: Date.now() + LINKED_SOURCE_TICKET_TTL_MS,
++      });
++      return `cfoslst1_${this.ctx.id.toString()}_${nonce}`;
++    });
++  }
++
++  claimLinkedSourceTicket(nonce: string, now: number): ClaimedLinkedSource | null {
++    return this.ctx.storage.transactionSync(() => {
++      const ticket = this.ctx.storage.kv.get<{
++        gatekeeperId: WorkpieceId;
++        expiresAt: number;
++      }>(`linkedSourceTicket:${nonce}`);
++      if (!ticket) return null;
++
++      this.ctx.storage.kv.delete(`linkedSourceTicket:${nonce}`);
++      const gatekeeperKey = `linkedSourceTicketForGatekeeper:${ticket.gatekeeperId}`;
++      if (this.ctx.storage.kv.get<string>(gatekeeperKey) === nonce) {
++        this.ctx.storage.kv.delete(gatekeeperKey);
++      }
++      if (!Number.isFinite(ticket.expiresAt) || ticket.expiresAt <= now) return null;
++
++      const record = this.storage.gatekeepers.get(ticket.gatekeeperId);
++      if (record?.creationSpec?.type !== "gatekeeper") return null;
++
++      const internalKey = `linkedSourceInternalHandleForGatekeeper:${ticket.gatekeeperId}`;
++      let internalNonce = this.ctx.storage.kv.get<string>(internalKey);
++      if (!internalNonce) {
++        internalNonce = crypto.randomUUID();
++        this.ctx.storage.kv.put(internalKey, internalNonce);
++        this.ctx.storage.kv.put(
++            `linkedSourceInternalHandle:${internalNonce}`, ticket.gatekeeperId);
++      }
++
++      const accessKey = `sourceAccessIdForGatekeeper:${ticket.gatekeeperId}`;
++      let accessNonce = this.ctx.storage.kv.get<string>(accessKey);
++      if (!accessNonce) {
++        accessNonce = crypto.randomUUID();
++        this.ctx.storage.kv.put(accessKey, accessNonce);
++        this.ctx.storage.kv.put(`sourceAccessId:${accessNonce}`, ticket.gatekeeperId);
++      }
++      const overseerId = this.ctx.id.toString();
++      return {
++        sourceHandle: `cfoslsi1_${overseerId}_${internalNonce}`,
++        sourceAccessId: `cfoslsa1_${overseerId}_${accessNonce}`,
++      };
++    });
+@@ -2662 +2718,2 @@ class OverseerImpl implements AgentHooks {
+-    const gatekeeperId = this.ctx.storage.kv.get<WorkpieceId>(`linkedSourceHandle:${nonce}`);
++    const gatekeeperId = this.ctx.storage.kv.get<WorkpieceId>(
++        `linkedSourceInternalHandle:${nonce}`);
+@@ -2672 +2729,2 @@ class OverseerImpl implements AgentHooks {
+-    const gatekeeperId = this.ctx.storage.kv.get<WorkpieceId>(`linkedSourceHandle:${nonce}`);
++    const gatekeeperId = this.ctx.storage.kv.get<WorkpieceId>(
++        `linkedSourceInternalHandle:${nonce}`);
+@@ -2681,16 +2738,0 @@ class OverseerImpl implements AgentHooks {
+-  registerSourceAccessHandle(nonce: string): string | null {
+-    const gatekeeperId = this.ctx.storage.kv.get<WorkpieceId>(`linkedSourceHandle:${nonce}`);
+-    const record = gatekeeperId === undefined ? undefined : this.storage.gatekeepers.get(gatekeeperId);
+-    if (!record || record.creationSpec?.type !== "gatekeeper") return null;
+-    const gatekeeperKey = `sourceAccessIdForGatekeeper:${gatekeeperId}`;
+-    return this.ctx.storage.transactionSync(() => {
+-      let accessNonce = this.ctx.storage.kv.get<string>(gatekeeperKey);
+-      if (!accessNonce) {
+-        accessNonce = crypto.randomUUID();
+-        this.ctx.storage.kv.put(gatekeeperKey, accessNonce);
+-        this.ctx.storage.kv.put(`sourceAccessId:${accessNonce}`, gatekeeperId);
+-      }
+-      return `cfoslsa1_${this.ctx.id.toString()}_${accessNonce}`;
+-    });
+-  }
+-
+@@ -6924,2 +6966,6 @@ export class OverseerDurableObject extends DurableObject<Cloudflare.Env> {
+-  createLinkedSourceHandle(gatekeeperId: WorkpieceId): string {
+-    return this.impl.createLinkedSourceHandle(gatekeeperId);
++  createLinkedSourceTicket(gatekeeperId: WorkpieceId): string {
++    return this.impl.createLinkedSourceTicket(gatekeeperId);
++  }
++
++  claimLinkedSourceTicket(nonce: string, now: number): ClaimedLinkedSource | null {
++    return this.impl.claimLinkedSourceTicket(nonce, now);
+@@ -6936,4 +6981,0 @@ export class OverseerDurableObject extends DurableObject<Cloudflare.Env> {
+-  registerSourceAccessHandle(nonce: string): string | null {
+-    return this.impl.registerSourceAccessHandle(nonce);
+-  }
+-
+@@ -7143 +7185 @@ export class GatekeeperLoopback extends WorkerEntrypoint<Cloudflare.Env, Gatekee
+-              .createLinkedSourceHandle(props.gatekeeperId);
++              .createLinkedSourceTicket(props.gatekeeperId);
+@@ -7179,2 +7221,2 @@ export class SourceAccessBroker
+-  async describe(handle: string): Promise<LinkedSourceDescription | null> {
+-    const parsed = parseLinkedSourceHandle(handle);
++  async claim(sourceTicket: string): Promise<ClaimedLinkedSource | null> {
++    const parsed = parseLinkedSourceTicket(sourceTicket);
+@@ -7185 +7227 @@ export class SourceAccessBroker
+-        .describeLinkedSourceHandle(parsed.nonce);
++        .claimLinkedSourceTicket(parsed.nonce, Date.now());
+@@ -7191,2 +7233,2 @@ export class SourceAccessBroker
+-  async openReadSession(handle: string): Promise<unknown | null> {
+-    const parsed = parseLinkedSourceHandle(handle);
++  async describe(handle: string): Promise<LinkedSourceDescription | null> {
++    const parsed = parseLinkedSourceInternalHandle(handle);
+@@ -7197 +7239 @@ export class SourceAccessBroker
+-        .openLinkedSourceHandle(parsed.nonce);
++        .describeLinkedSourceHandle(parsed.nonce);
+@@ -7203,2 +7245,2 @@ export class SourceAccessBroker
+-  async registerSourceAccess(handle: string): Promise<string | null> {
+-    const parsed = parseLinkedSourceHandle(handle);
++  async openReadSession(handle: string): Promise<unknown | null> {
++    const parsed = parseLinkedSourceInternalHandle(handle);
+@@ -7209 +7251 @@ export class SourceAccessBroker
+-        .registerSourceAccessHandle(parsed.nonce);
++        .openLinkedSourceHandle(parsed.nonce);
+@@ -7213,0 +7256,6 @@ export class SourceAccessBroker
++
++}
++
++function parseLinkedSourceTicket(ticket: string): {overseerId: string; nonce: string} | null {
++  const match = /^cfoslst1_([0-9a-f]+)_([0-9a-f-]{36})$/i.exec(ticket);
++  return match ? {overseerId: match[1], nonce: match[2]} : null;
+@@ -7216,2 +7264,3 @@ export class SourceAccessBroker
+-function parseLinkedSourceHandle(handle: string): {overseerId: string; nonce: string} | null {
+-  const match = /^cfosls1_([0-9a-f]+)_([0-9a-f-]{36})$/i.exec(handle);
++function parseLinkedSourceInternalHandle(
++    handle: string): {overseerId: string; nonce: string} | null {
++  const match = /^cfoslsi1_([0-9a-f]+)_([0-9a-f-]{36})$/i.exec(handle);
+diff --git a/packages/workshop-shared/src/gatekeeper.ts b/packages/workshop-shared/src/gatekeeper.ts
+index 6fc761f..13c8055 100644
+--- a/packages/workshop-shared/src/gatekeeper.ts
++++ b/packages/workshop-shared/src/gatekeeper.ts
+@@ -215,0 +216,6 @@ export type LinkedSourceDescription = Pick<ResourceDescription, "url" | "title"
++/** Agentに露出しない、WWWK内部用のLinked Source接続。 */
++export type ClaimedLinkedSource = {
++  sourceHandle: string;
++  sourceAccessId: string;
++};
++
+@@ -219 +225,2 @@ export type LinkedSourceDescription = Pick<ResourceDescription, "url" | "title"
+- * handle は CFOS が発行・失効させ、利用側は本文や capability を保存しない。
++ * Agentが受け取るticketは短命かつ1回限りである。claim後のhandleは
++ * WWWK内部だけで保持する。
+@@ -222 +229,4 @@ export interface SourceAccessBroker extends WorkerEntrypoint {
+-  /** 現在有効な handle の非秘密な原典情報を返す。 */
++  /** 短命ticketを一度だけ内部handleと非bearer IDへ交換する。 */
++  claim(sourceTicket: string): Promise<ClaimedLinkedSource | null>;
++
++  /** 現在有効な内部handleの非秘密な原典情報を返す。 */
+@@ -225 +235 @@ export interface SourceAccessBroker extends WorkerEntrypoint {
+-  /** 現在有効な handle から新しい observation-only Session を開く。 */
++  /** 現在有効な内部handleから新しい observation-only Session を開く。 */
+@@ -227,6 +236,0 @@ export interface SourceAccessBroker extends WorkerEntrypoint {
+-
+-  /**
+-   * 現在有効な handle を、同一Overseer内の observer 検証だけに使える非bearer IDへ登録する。
+-   * ID自体から本文、Session、verifierは取得できない。
+-   */
+-  registerSourceAccess(handle: string): Promise<string | null>;

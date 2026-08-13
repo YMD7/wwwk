@@ -1,0 +1,71 @@
+diff --git a/packages/gatekeeper-wwwk/skills/wwwk/SKILL.md b/packages/gatekeeper-wwwk/skills/wwwk/SKILL.md
+index 4b72334..c367377 100644
+--- a/packages/gatekeeper-wwwk/skills/wwwk/SKILL.md
++++ b/packages/gatekeeper-wwwk/skills/wwwk/SKILL.md
+@@ -32,2 +32,3 @@ WWWKは所有者専用の個人Wikiである。利用可能な場合は、一般
+-1. Notion bindingの`$cfosLinkedSourceHandle()`を呼び、CFOS発行のhandleを得る。
+-2. `source: { kind: "linked", sourceHandle }`を`ingest()`へ渡す。
++1. Notion bindingの`$cfosLinkedSourceHandle()`を呼び、CFOS発行の一回限りticketを得る。
++2. 同じ`executeCode`内で、戻り値を`sourceHandle`として
++   `source: { kind: "linked", sourceHandle }`へ直接渡す。
+@@ -37 +38,2 @@ WWWKは所有者専用の個人Wikiである。利用可能な場合は、一般
+-- handleを会話、Evidence、Wiki、metadata、ログへ出さない。
++- ticketを返値、会話、Evidence、Wiki、metadata、ログへ出さない。
++- ticketは短命かつ1回限りであり、別の実行に保持または再利用しない。
+diff --git a/packages/gatekeeper-wwwk/src/env.d.ts b/packages/gatekeeper-wwwk/src/env.d.ts
+index 78f81f7..a1d9250 100644
+--- a/packages/gatekeeper-wwwk/src/env.d.ts
++++ b/packages/gatekeeper-wwwk/src/env.d.ts
+@@ -3,0 +4,4 @@ declare namespace Cloudflare {
++      claim(sourceTicket: string): Promise<{
++        sourceHandle: string;
++        sourceAccessId: string;
++      } | null>;
+@@ -11 +14,0 @@ declare namespace Cloudflare {
+-      registerSourceAccess(handle: string): Promise<string | null>;
+diff --git a/packages/gatekeeper-wwwk/src/index.ts b/packages/gatekeeper-wwwk/src/index.ts
+index a866ba7..13dd4d4 100644
+--- a/packages/gatekeeper-wwwk/src/index.ts
++++ b/packages/gatekeeper-wwwk/src/index.ts
+@@ -162,0 +163,4 @@ type SourceAccessBroker = {
++  claim(sourceTicket: string): Promise<{
++    sourceHandle: string;
++    sourceAccessId: string;
++  } | null>;
+@@ -165 +168,0 @@ type SourceAccessBroker = {
+-  registerSourceAccess(handle: string): Promise<string | null>;
+@@ -280,2 +283,4 @@ async function readLinkedNotionSourceWithBroker(
+-  if (!input.sourceHandle) throw new Error("Linked source handle is required.");
+-  const description = await broker.describe(input.sourceHandle);
++  if (!input.sourceHandle) throw new Error("Linked source ticket is required.");
++  const claimed = await broker.claim(input.sourceHandle);
++  if (!claimed) throw new Error("Linked source ticket is unavailable.");
++  const description = await broker.describe(claimed.sourceHandle);
+@@ -284 +289 @@ async function readLinkedNotionSourceWithBroker(
+-  const opened = await broker.openReadSession(input.sourceHandle);
++  const opened = await broker.openReadSession(claimed.sourceHandle);
+@@ -298,2 +302,0 @@ async function readLinkedNotionSourceWithBroker(
+-    const sourceAccessId = await broker.registerSourceAccess(input.sourceHandle);
+-    if (!sourceAccessId) throw new Error("Linked source access is unavailable.");
+@@ -313,2 +316,2 @@ async function readLinkedNotionSourceWithBroker(
+-        sourceHandle: input.sourceHandle,
+-        sourceAccessId,
++        sourceHandle: claimed.sourceHandle,
++        sourceAccessId: claimed.sourceAccessId,
+@@ -1228 +1231,5 @@ export class WwwkGatekeeper
+-        "inputs, or ingest one explicitly requested text.",
++        "inputs, or ingest one explicitly requested text. For an attached connected Notion " +
++        "Page, call its $cfosLinkedSourceHandle() and in the same executeCode pass the returned " +
++        "one-time value directly as sourceHandle to " +
++        "ingest({source:{kind:'linked',sourceHandle},evidence:{title,content}," +
++        "wiki:{title,content}}); never log, return, or display that value.",
+diff --git a/packages/gatekeeper-wwwk/src/types.d.ts b/packages/gatekeeper-wwwk/src/types.d.ts
+index b3024bc..993d2ce 100644
+--- a/packages/gatekeeper-wwwk/src/types.d.ts
++++ b/packages/gatekeeper-wwwk/src/types.d.ts
+@@ -52 +52 @@ export interface WwwkDocumentDraft {
+-/** Agent が本文を作らず、CFOS handle から取り込む外部原典。 */
++/** Agent が本文を作らず、CFOSの短命ticketから取り込む外部原典。 */
+@@ -56 +56 @@ export interface WwwkLinkedSourceInput {
+-  /** CFOS が発行した非ポータブルかつ失効可能な opaque handle。 */
++  /** CFOS が発行した非ポータブル、1回限りかつ短命な opaque ticket。 */

@@ -49,11 +49,11 @@ export interface WwwkDocumentDraft {
   content: string;
 }
 
-/** Agent が本文を作らず、CFOS handle から取り込む外部原典。 */
+/** Agent が本文を作らず、CFOSの短命ticketから取り込む外部原典。 */
 export interface WwwkLinkedSourceInput {
   /** Linked Source を示す固定値。 */
   kind: "linked";
-  /** CFOS が発行した非ポータブルかつ失効可能な opaque handle。 */
+  /** CFOS が発行した非ポータブル、1回限りかつ短命な opaque ticket。 */
   sourceHandle: string;
 }
 

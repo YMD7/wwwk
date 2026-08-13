@@ -12,12 +12,14 @@ afterEach(async () => {
   await reset();
 });
 
-it("persists only an opaque handle and fails closed after Broker revocation", async () => {
-  const handle = await testEnv.CFOS_SOURCE_ACCESS_BROKER.issue();
+it("exchanges the ticket, persists only an internal handle, and fails closed", async () => {
+  const ticket = await testEnv.CFOS_SOURCE_ACCESS_BROKER.issue();
   const library = testEnv.OPAQUE_HANDLE_POC.getByName("owner-a");
 
-  await library.ingest(handle);
-  expect(await library.storedHandle()).toBe(handle);
+  await library.ingest(ticket);
+  const handle = await library.storedHandle();
+  expect(handle).toBeDefined();
+  expect(handle).not.toBe(ticket);
   expect(await library.read()).toBe("fresh-session-1");
   expect(await library.read()).toBe("fresh-session-2");
 
@@ -26,6 +28,6 @@ it("persists only an opaque handle and fails closed after Broker revocation", as
   expect(await restarted.storedHandle()).toBe(handle);
   expect(await restarted.read()).toBe("fresh-session-3");
 
-  await testEnv.CFOS_SOURCE_ACCESS_BROKER.revoke(handle);
+  await testEnv.CFOS_SOURCE_ACCESS_BROKER.revoke(handle!);
   await expect(restarted.read()).resolves.toBeNull();
 });

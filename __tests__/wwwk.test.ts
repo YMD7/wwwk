@@ -359,6 +359,12 @@ describe("WwwkGatekeeper", () => {
 
     expect(discovery.catalog.entries).toHaveLength(1);
     expect(discovery.catalog.entries[0].id).toBe("wwwk-session");
+    expect(discovery.catalog.entries[0].description).toContain(
+      "$cfosLinkedSourceHandle()",
+    );
+    expect(discovery.catalog.entries[0].description).toContain(
+      "source:{kind:'linked',sourceHandle}",
+    );
     expect(discovery.commands).toEqual([expect.objectContaining({
       id: "wwwk",
       name: "wwwk",
@@ -429,6 +435,7 @@ describe("WwwkGatekeeper", () => {
     await parent.configureSharing(false);
     await parent.setLinkedSourceRevoked(false);
     const action = await parent.ingestLinked("linked-owner");
+    const agentTicket = await parent.lastLinkedSourceTicket();
 
     expect(action.description.awaitDecision).toBe(true);
     expect(action.description.description).toContain("連携テストページ");
@@ -448,7 +455,11 @@ describe("WwwkGatekeeper", () => {
         expect(state.storage.sql.exec<{ count: number }>(
           "SELECT COUNT(*) AS count FROM linked_sources",
         ).one().count).toBe(1);
-        expect(state.storage.kv.get(`linkedSourceHandle:${source!.id}`)).toBeDefined();
+        const storedHandle = state.storage.kv.get<string>(
+          `linkedSourceHandle:${source!.id}`,
+        );
+        expect(storedHandle).toBeDefined();
+        expect(storedHandle).not.toBe(agentTicket);
       },
     );
 

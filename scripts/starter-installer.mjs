@@ -562,10 +562,12 @@ async function prepareIntegration(starterRoot, paths) {
   await git(cfosRoot, ["checkout", "--detach", compatibility.cfos.baseRevision]);
   await applyPatch(paths.integrationPath, compatibility.starter.patch);
   await applyPatch(cfosRoot, compatibility.cfos.patch);
+  await applyPatch(cfosRoot, compatibility.cfos.sourceTicketPatch);
   await applyPatch(cfosRoot, compatibility.cfos.disconnectPatch);
   await applyPatch(cfosRoot, compatibility.cfos.browserTypePatch);
   await materializeRuntime(paths.integrationPath);
   await applyPatch(cfosRoot, compatibility.wwwk.patch);
+  await applyPatch(cfosRoot, compatibility.wwwk.sourceTicketPatch);
   await writeFile(
     join(cfosRoot, "pnpm-lock.yaml"),
     await readFile(join(wwwkRoot, "installer", compatibility.cfos.lockfile)),

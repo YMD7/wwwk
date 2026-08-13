@@ -6,6 +6,8 @@ worktree と Wrangler state を置く。
 
 - `patches/cfos-8b08672-7964294.patch` は CFOS `8b08672` と companion revision
   `7964294` のraw diffである。
+- `patches/cfos-8b08672-linked-source-ticket.patch`は、Agent向けの値を短命かつ
+  1回限りticketとし、claim後の内部handleと分離する追加patchである。
 - `patches/starter-93f14df-cfos-cwd.patch` は Starter `93f14df` がCFOSをCFOS自身の
   project cwdでbuildするための最小互換patchである。Starterのpnpm 11.9とCFOSのpnpm
   11.17を混在させず、各projectの指定を使う。
@@ -16,6 +18,8 @@ worktree と Wrangler state を置く。
   `--persist-to` を渡す最小の local-only patchである。
 - `patches/cfos-8b08672-browser-type-suppression.patch` はNode型が存在する統合workspaceでも
   Workshop frontendの既存testをbuildできるよう、2つの型抑止を安定化する互換patchである。
+- `patches/wwwk-8ba113e-linked-source-ticket.patch`は、WWWKがticketをBrokerでclaimし、
+  Agentに露出しない内部handleだけを保存する追加patchである。
 - `compatibility/cfos-8b08672-wwwk.pnpm-lock.yaml` はCFOSへWWWK packageを追加した統合後の
   lockfileであり、local installerはこれを使ってfrozen installする。
 

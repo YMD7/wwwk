@@ -62,7 +62,8 @@ Phase 5 開始時点の既知の基準は次のとおりである。
 
 ### Phase 3: 最初の Linked Source
 
-**ゴール:** Notion Page を CFOS の読取権限と stable Broker を通して取り込める。
+**ゴール:** Notion PageをCFOSの読取権限とstable Brokerを通して取り込める。
+Agentへは短命かつ1回限りのticketだけを渡し、内部handleと分離する。
 
 ### Phase 4: 共有 Gadget の安全な参照
 

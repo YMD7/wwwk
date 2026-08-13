@@ -102,8 +102,9 @@ WWWK は、AI 向けの利用方法を 1 つの Agent Skill として提供す�
 - 必須の Skill は WWWK 自身が提供し、Context Library の有無に依存させない。
 
 ローカル MVP では静的な `skills/wwwk/SKILL.md` を package に同梱する。Gatekeeper の
-`getSlashCommandProvider()` が `/wwwk` として Skill を返し、`getAgentCatalog()` は
-Session の用途だけを Agent に提示する。Skill の自動読込み、Skill の更新方式、更新などの
+`getSlashCommandProvider()` が `/wwwk` として Skill を返す。`getAgentCatalog()` はSessionの
+用途に加え、添付されたNotion PageをLinked Sourceとして取り込む正確な最小手順を
+Agentへ提示する。Skill の自動読込み、Skill の更新方式、更新などの
 追加操作 API は未決定とする。
 
 ## 初期ユーザーフロー
@@ -155,7 +156,10 @@ interface WwwkSession {
 }
 
 interface WwwkIngestInput {
-  source: WwwkDocumentDraft;
+  source: WwwkDocumentDraft | {
+    kind: "linked";
+    sourceHandle: string;
+  };
   evidence: WwwkDocumentDraft;
   wiki: WwwkDocumentDraft;
 }
@@ -202,7 +206,8 @@ interface WwwkInputRef {
 - `list()`、`trace()`、ページングは、実測した必要性が出るまで追加しない。
 - `ingest()` は、ユーザーが指定した 1 つのテキストを Source、Evidence、新規 Wiki と
   してまとめて保存する。`source.content` は指定された入力を変更せず受け取る。
-- Agent は title と content だけを渡す。ID、type、生成依存リンク、content hash、
+- Owned Sourceでは、Agentはtitleとcontentだけを渡す。Linked Sourceでは、
+  `kind` と一回限りのticketだけをSourceとして渡す。ID、type、生成依存リンク、content hash、
   作成日時、所有者、生成メタデータは WWWK Core が生成または記録する。
 - 戻り値は `void` とし、承認前の文書や provisional ID を API へ露出しない。
 
@@ -236,36 +241,46 @@ Linked Source は、外部原典への実行時接続と、その接続を利用
 revision の組である。capability とポータブルな Source revision は分離して管理する。
 
 - 外部原典への接続、再認可、監査、失効は CFOS に委ねる。
-- WWWK は、CFOS発行のopaque handleをstable Brokerへ渡して原典を取得する。
+- WWWKは、Agentが受け取ったCFOS発行の短命ticketをstable Brokerでclaimし、
+  内部handleから原典を取得する。
 - 来歴を確定する本文は、Agent の自己申告を信頼せず、WWWK の Adapter が capability
   から取得する。
 - Source の種類は明示的な allowlist と Adapter で段階的に追加し、最初から汎用
   Source プロトコルを作らない。
 - 初期対応はNotion Pageだけとする。
-- handle と接続状態はポータブルデータに含めない。reference-only の Linked Source は、
+- ticket、内部handle、接続状態はポータブルデータに含めない。reference-onlyの
+  Linked Sourceは、
   インポート後に再リンクするまで利用不能とする。
 - 有効なhandleをCFOS Brokerで確認できない Linked Source とその派生データは、fail-closed
   で利用不能とする。
 
-### Linked Source handle と Broker
+### Linked Source ticket、内部handle、Broker
 
 ```ts
 interface SourceAccessBroker {
+  claim(ticket: string): Promise<{
+    sourceHandle: string;
+    sourceAccessId: string;
+  } | null>;
   describe(handle: string): Promise<LinkedSourceDescription | null>;
   openReadSession(handle: string): Promise<unknown | null>;
-  registerSourceAccess(handle: string): Promise<string | null>;
 }
 ```
 
-- Agentは接続済みNotion bindingの`$cfosLinkedSourceHandle()`からhandleを取得し、
-  `ingest()`の`sourceHandle`として渡す。
-- handleはCFOSが発行する推測不能、失効可能、非ポータブルな値である。WWWKが永続化する
-  実行時接続はこのhandleだけとし、外部原典のbinding、Fetcher、一時Sessionは保存しない。
+- Agentは接続済みNotion bindingの`$cfosLinkedSourceHandle()`からticketを取得し、
+  同じ実行内で`ingest()`の`sourceHandle`へ直接渡す。ticketを返値、会話、
+  Evidence、Wiki、metadata、ログへ出さない。
+- ticketは推測不能、非ポータブル、発行から5分で失効、1回限りである。同じ接続から
+  新しいticketを発行すると、未使用の旧ticketは失効する。
+- `claim(ticket)`はticketを消費し、Agentへ露出しない内部handleと、observer検証に
+  使う非bearer `sourceAccessId`を返す。失効、再利用、不明は`null`でfail-closedにする。
+- WWWKが永続化する実行時接続は内部handleだけとし、ticket、外部原典のbinding、
+  Fetcher、一時Sessionは保存しない。
 - `describe(handle)`はAdapter選択と来歴記録に必要な非秘密情報だけを返す。
 - `openReadSession(handle)`はCFOSでhandleを検証してから、呼び出すたび新しい一時Sessionを
   返す。失効、不明、障害は`null`でfail-closedにする。
-- `registerSourceAccess(handle)`は本文を開けない非bearer IDを返す。IDの信頼済み対応表は
-  CFOS側だけで保持し、共有時のobserver検証にだけ使う。
+- `sourceAccessId`の信頼済み対応表はCFOS側だけで保持し、共有時のobserver検証に
+  だけ使う。
 - Session は observation-only の承認キューで開く。`authorizeObservation()` は CFOS の
   監査へ記録し、`submitAction()` と `bindHook()` は常に拒否する。
 - Source 参照は、元の Agent セッションではなく `linked-source` として監査する。
@@ -281,7 +296,7 @@ WWWK の情報を使った Gadget は、実際に返す文書の生成元を共�
 - `search()` は結果集合、`read()` は返す文書から、Wiki -> Evidence -> Source revision の
   閉包をSQLで求め、Linked Sourceの和集合を重複なく使う。`ingest()`だけでは共有要件を
   追加しない。
-- CFOSはhandleから非bearerのopaque `sourceAccessId`を発行し、Source Gatekeeperとの対応を
+- CFOSはticketのclaim時に非bearerのopaque `sourceAccessId`を発行し、Source Gatekeeperとの対応を
   Source側Overseerのembedded KVだけに保持する。WWWKはopaque IDを実行時KVにだけ保存する。
 - WWWKは`sourceAccessId`をSQL、frontmatter、export、Agent結果、action/observationの
   descriptionへ含めない。verifier、認証情報、外部capability、Sessionも保持しない。
