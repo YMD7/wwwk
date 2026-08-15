@@ -257,19 +257,23 @@ runnerと同じowner-only一時configだけに置く。この操作はWWWKをdep
 途中で失敗した場合、成功済みの新規Workerは残る。自動rollbackは行わず、live状態を確認してから
 残ったWorkerを明示的に整理し、未使用名で再実行する。
 
-## アンインストール
+## 接続解除とデータ消去
 
-アンインストールは接続解除とデータ消去を分離する。
+標準操作は接続解除とし、データ消去と分離する。接続解除は導入前のコードへ戻す完全な
+アンインストールではない。
 
 ### 接続解除
 
-標準のアンインストールは、test、build、dry-run が成功した構成だけをデプロイし、次の
-状態へ戻す。
+接続解除は、test、build、dry-run が成功した構成だけをデプロイし、次の状態にする。
 
-- Workshop は `GATEKEEPER_WWWK` と companion patch を含まない公式構成である。
+- Workshop は固定tupleのcompanion patchを維持し、`GATEKEEPER_WWWK`を外す。
 - WWWK Worker は `CFOS_SOURCE_ACCESS_BROKER` を外すが、同じ Durable Object class と
   データを保持する。
 - CFOS から WWWK へ新しい Session を開始できない。
+
+これは未改変の公式CFOSコードへの完全復帰ではない。bindingがない既存WWWK accountを
+dormantとして安全に扱い、同じデータへ再接続できるようにするため、対応するcompanion patchは
+Workshopに残す。
 
 live runnerの実装後、disconnect は Workshop から `GATEKEEPER_WWWK` を外して先に deploy し、
 その後 WWWK から `CFOS_SOURCE_ACCESS_BROKER` を外して deploy する。どちらの deploy も事前の
