@@ -1,6 +1,6 @@
 .worktrees/
 .tmp/
-.wwwk-private/
+/.wwwk-private/
 node_modules
 node_modules/
 dist/
