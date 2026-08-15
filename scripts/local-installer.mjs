@@ -438,6 +438,11 @@ export async function prepareIntegration({cfos, stateDir, dryRun = false}) {
     paths.integrationPath,
     compatibility.cfos.sourceTicketPatch,
   );
+  await applyPatch(
+    cfosRoot,
+    paths.integrationPath,
+    compatibility.cfos.notionPageRoutingPatch,
+  );
   await applyPatch(cfosRoot, paths.integrationPath, compatibility.cfos.disconnectPatch);
   await applyPatch(cfosRoot, paths.integrationPath, compatibility.cfos.browserTypePatch);
   await applyPatch(cfosRoot, paths.integrationPath, compatibility.cfos.localPatch);

@@ -563,6 +563,7 @@ async function prepareIntegration(starterRoot, paths) {
   await applyPatch(paths.integrationPath, compatibility.starter.patch);
   await applyPatch(cfosRoot, compatibility.cfos.patch);
   await applyPatch(cfosRoot, compatibility.cfos.sourceTicketPatch);
+  await applyPatch(cfosRoot, compatibility.cfos.notionPageRoutingPatch);
   await applyPatch(cfosRoot, compatibility.cfos.disconnectPatch);
   await applyPatch(cfosRoot, compatibility.cfos.browserTypePatch);
   await materializeRuntime(paths.integrationPath);

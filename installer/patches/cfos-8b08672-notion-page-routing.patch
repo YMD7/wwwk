@@ -1,0 +1,103 @@
+diff --git a/packages/gatekeeper-notion/__tests__/notion-api.test.ts b/packages/gatekeeper-notion/__tests__/notion-api.test.ts
+index 358933f..cd9ccfc 100644
+--- a/packages/gatekeeper-notion/__tests__/notion-api.test.ts
++++ b/packages/gatekeeper-notion/__tests__/notion-api.test.ts
+@@ -3,0 +4 @@ import {
++  classifyNotionResourceUrl,
+@@ -4,0 +6 @@ import {
++  NOTION_ITEM_URL_PATTERN,
+@@ -65,0 +68,25 @@ describe("parseNotionId", () => {
++describe("Notion resource routing", () => {
++  const itemId = "8513f007-d607-4da8-8eeb-abcbcd0b78f4";
++
++  it("routes both current Notion page URL forms to one item", () => {
++    expect(classifyNotionResourceUrl(
++      "https://www.notion.so/Team-Home-8513f007d6074da88eebabcbcd0b78f4",
++    )).toEqual({ kind: "item", itemId });
++    expect(classifyNotionResourceUrl(
++      "https://app.notion.com/p/Team-Home-8513f007d6074da88eebabcbcd0b78f4",
++    )).toEqual({ kind: "item", itemId });
++
++    const pattern = new URLPattern(NOTION_ITEM_URL_PATTERN);
++    expect(pattern.test("https://www.notion.so/8513f007d6074da88eebabcbcd0b78f4")).toBe(true);
++    expect(pattern.test("https://app.notion.com/p/8513f007d6074da88eebabcbcd0b78f4")).toBe(true);
++  });
++
++  it("routes only an explicit Notion root to the workspace", () => {
++    expect(classifyNotionResourceUrl("https://www.notion.so/")).toEqual({ kind: "workspace" });
++    expect(() => classifyNotionResourceUrl("https://example.invalid/page"))
++      .toThrow("Unsupported Notion resource URL");
++    expect(() => classifyNotionResourceUrl("https://app.notion.com/p/not-a-page"))
++      .toThrow("Could not find a Notion ID");
++  });
++});
++
+diff --git a/packages/gatekeeper-notion/src/notion-api.ts b/packages/gatekeeper-notion/src/notion-api.ts
+index 5cdb57a..d7050a1 100644
+--- a/packages/gatekeeper-notion/src/notion-api.ts
++++ b/packages/gatekeeper-notion/src/notion-api.ts
+@@ -659,0 +660,27 @@ export function primaryDataSourceId(db: NotionDatabaseResponse): string {
++export const NOTION_ITEM_URL_PATTERN =
++  "https://:host(www\\.notion\\.so|app\\.notion\\.com)/:path+";
++
++export type NotionResourceTarget =
++  | { kind: "item"; itemId: string }
++  | { kind: "workspace" };
++
++// Classify only explicit Notion resource URLs. An unrecognized item URL must not widen into the
++// whole-workspace capability.
++export function classifyNotionResourceUrl(resourceUrl: string): NotionResourceTarget {
++  let parsed: URL;
++  try {
++    parsed = new URL(resourceUrl);
++  } catch {
++    throw new NotionApiError(400, "Invalid Notion resource URL.");
++  }
++
++  const hostname = parsed.hostname.toLowerCase();
++  const isNotionHost = /(^|\.)notion\.so$/.test(hostname) || hostname === "app.notion.com";
++  if (!isNotionHost) {
++    throw new NotionApiError(400, "Unsupported Notion resource URL.");
++  }
++
++  if (parsed.pathname.replace(/\/+$/, "") === "") return { kind: "workspace" };
++  return { kind: "item", itemId: parseNotionId(resourceUrl) };
++}
++
+diff --git a/packages/gatekeeper-notion/src/notion.ts b/packages/gatekeeper-notion/src/notion.ts
+index 3429910..c35076a 100644
+--- a/packages/gatekeeper-notion/src/notion.ts
++++ b/packages/gatekeeper-notion/src/notion.ts
+@@ -35,0 +36,2 @@ import {
++  NOTION_ITEM_URL_PATTERN,
++  classifyNotionResourceUrl,
+@@ -160 +162 @@ const ITEM_RESOURCE: SupportedResource = {
+-  urlPattern: "https://www.notion.so/:path+",
++  urlPattern: NOTION_ITEM_URL_PATTERN,
+@@ -198,18 +199,0 @@ const NOT_CONFIGURED_HTML = `<!DOCTYPE html>
+-// Extract a Notion object ID from a resource URL, or null if there isn't one (e.g. the
+-// whole-workspace catch-all URL).
+-function idFromResourceUrl(url: string): string | null {
+-  let parsed: URL;
+-  try {
+-    parsed = new URL(url);
+-  } catch {
+-    return null;
+-  }
+-  if (!/(^|\.)notion\.so$/i.test(parsed.hostname)) return null;
+-  if (stripTrailingSlashes(parsed.pathname).length === 0) return null;
+-  try {
+-    return parseNotionId(url);
+-  } catch {
+-    return null;
+-  }
+-}
+-
+@@ -519,2 +503,2 @@ export class GatekeeperUserImpl extends WorkerEntrypoint<Env, GatekeeperUserImpl
+-    const id = idFromResourceUrl(url);
+-    if (id) {
++    const target = classifyNotionResourceUrl(url);
++    if (target.kind === "item") {
+@@ -523 +507 @@ export class GatekeeperUserImpl extends WorkerEntrypoint<Env, GatekeeperUserImpl
+-        itemId: id,
++        itemId: target.itemId,
