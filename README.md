@@ -38,6 +38,10 @@ install / disconnect の build と Wrangler dry-run を実行できる。本番 
 
 導入契約と現在の実装状況は [Installation](docs/INSTALLATION.md) を参照する。
 
+初期スコープの実装は完了している。検証済みの対応組では、ローカル環境での保存、検索、
+原典追跡、再起動後の永続化に加え、Starter環境への導入、Notion PageのLinked Source取込み、
+承認までを確認済みである。複数revision対応や自動upgradeは未対応とする。
+
 ## 独立性と商標
 
 WWWK は独立したオープンソースプロジェクトであり、Cloudflare, Inc. の公式製品では
@@ -48,7 +52,6 @@ Cloudflare および関連する名称とロゴは、Cloudflare, Inc. の商標�
 ## ドキュメント
 
 - [Development](DEVELOPMENT.md)
-- [Implementation phases](plans/IMPLEMENTATION_PHASES.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Installation](docs/INSTALLATION.md)
 - [Principles](docs/PRINCIPLES.md)

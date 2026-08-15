@@ -10,9 +10,9 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 ## 作業前に読むもの
 
 1. `DEVELOPMENT.md`
-2. `plans/IMPLEMENTATION_PHASES.md` の現在のフェーズ
-3. `docs/PRINCIPLES.md`
-4. `docs/ARCHITECTURE.md`
+2. `docs/PRINCIPLES.md`
+3. `docs/ARCHITECTURE.md`
+4. 現在の作業計画が存在する場合は、その計画
 5. 導入に関する変更では `docs/INSTALLATION.md`
 6. 対象となる CFOS の最新コードと公式資料
 
@@ -163,7 +163,7 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
   `excludeObservers` を通して CFOS に observation を遮断させる。
 - 観測済みSourceの集合は、CFOSで既存observerを検証した後、返却前にWWWK Gatekeeperの
   KVへ保存する。失敗時の過剰記録は許容するが、返却後の未記録は許可しない。
-- Phase 4の共有検証は同一Overseer/workspaceに限定する。別workspace由来のSourceは
+- 初期版の共有検証は同一Overseer/workspaceに限定する。別workspace由来のSourceは
   明示的にfail-closedとする。
 - ポータブルデータへ秘密情報や実行時 capability を含めない。
 

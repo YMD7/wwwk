@@ -3,10 +3,9 @@
 ## 状態
 
 WWWK の利用者向け導入方式は、version 固定の installer とする。特定の CFOS または
-`cloudflare-os-starter` fork は要求しない。Phase 6では対応する公式 CFOS clone をローカルで
-起動する入口を提供する。Phase 7では対応する Starter checkout に対する build、Wrangler
-dry-run、および明示確認付きのlive runnerを提供する。Cloudflare deployは、実行直前の
-明示承認が必要である。
+`cloudflare-os-starter` fork は要求しない。対応する公式 CFOS clone をローカルで起動する入口と、
+対応する Starter checkout に対する build、Wrangler dry-run、明示確認付きのlive runnerを
+提供する。Cloudflare deployは、実行直前の明示承認が必要である。
 
 現在の symbolic link 手順は内部的なローカル開発専用である。利用者向けの install / uninstall
 契約にはしない。
@@ -21,9 +20,9 @@ installer は、次の 2 つの環境へ同じ `gatekeeper-wwwk` を導入する
 初期版は、検証済みの Starter、CFOS、WWWK、companion patch の 1 組だけを対応対象にする。
 任意 version への自動適用、競合解決、upgrade 自動化は行わない。
 
-Phase 5の対応組とraw patchは[installer/](../installer/)で追跡する。StarterはCFOSを自身の
+対応組とraw patchは[installer/](../installer/)で追跡する。StarterはCFOSを自身の
 project cwdでbuildする最小互換patchも必要とする。両repositoryの公式checkoutは変更せず、
-次フェーズで一時worktreeへだけ適用する。
+一時worktreeへだけ適用する。
 
 ## 導入モデル
 

@@ -416,7 +416,7 @@ account の revoke は、同じ SQLite-backed Durable Object の transaction で
 
 ## ポータブルデータ
 
-Phase 2 の Bundle v1 は、archive や filesystem に依存しない plain data として扱う。
+Bundle v1 は、archive や filesystem に依存しない plain data として扱う。
 
 ```ts
 type WwwkPortableBundle = {
@@ -491,7 +491,7 @@ transaction 内で実行しない。検証または保存に失敗した場合�
 ### エクスポート境界
 
 - Owned Source とその派生データは、self-contained bundle としてエクスポートできる。
-- Phase 3では、Linked Sourceとその派生データを含むself-contained exportを拒否する。
+- 初期版では、Linked Sourceとその派生データを含むself-contained exportを拒否する。
 - Linked Sourceの全文出力とreference-only bundleは、出力許可を含むCFOS契約を確定して
   から扱う。
 - 自動または定期エクスポートは初期スコープに含めない。
