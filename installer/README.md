@@ -8,6 +8,8 @@ worktree と Wrangler state を置く。
   `7964294` のraw diffである。
 - `patches/cfos-8b08672-linked-source-ticket.patch`は、Agent向けの値を短命かつ
   1回限りticketとし、claim後の内部handleと分離する追加patchである。
+- `patches/cfos-8b08672-notion-page-routing.patch`は、現在のNotion Page URLをPageとして
+  判定し、解析できないURLをWorkspaceへ拡大せず拒否する追加patchである。
 - `patches/starter-93f14df-cfos-cwd.patch` は Starter `93f14df` がCFOSをCFOS自身の
   project cwdでbuildするための最小互換patchである。Starterのpnpm 11.9とCFOSのpnpm
   11.17を混在させず、各projectの指定を使う。
