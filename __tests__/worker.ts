@@ -90,6 +90,7 @@ export class TestApprovalQueue extends WorkerEntrypoint {
 }
 
 let brokerHandle: string | undefined;
+let brokerTicket: string | undefined;
 let brokerSessionCount = 0;
 let brokerVendorId = "notion";
 let brokerTsType = "NotionPage";
@@ -101,6 +102,7 @@ type TestBrokerRegistration = {
 };
 
 let brokerRegistrations = new Map<string, TestBrokerRegistration>();
+let brokerTickets = new Map<string, string>();
 
 function brokerRegistration(handle: string): TestBrokerRegistration | undefined {
   const registration = brokerRegistrations.get(handle);
@@ -137,15 +139,30 @@ class TestBrokerReadSession extends RpcTarget {
   [Symbol.dispose](): void {}
 }
 
-/** CFOS の stable Broker service binding を模倣する、test-only entrypoint。 */
+/** CFOSの一回限りticketとstable Brokerを模倣するtest-only entrypoint。 */
 export class TestSourceBroker extends WorkerEntrypoint {
   issue(): string {
     brokerHandle = crypto.randomUUID();
+    brokerTicket = crypto.randomUUID();
     brokerRegistrations.set(brokerHandle, {
       sourceAccessId: `test-source-access-${crypto.randomUUID()}`,
       revoked: false,
     });
-    return brokerHandle;
+    brokerTickets.set(brokerTicket, brokerHandle);
+    return brokerTicket;
+  }
+
+  claim(sourceTicket: string): {
+    sourceHandle: string;
+    sourceAccessId: string;
+  } | null {
+    const handle = brokerTickets.get(sourceTicket);
+    if (!handle) return null;
+    brokerTickets.delete(sourceTicket);
+    const registration = brokerRegistration(handle);
+    return registration
+      ? {sourceHandle: handle, sourceAccessId: registration.sourceAccessId}
+      : null;
   }
 
   revoke(handle: string): void {
@@ -170,9 +187,6 @@ export class TestSourceBroker extends WorkerEntrypoint {
     return new NativeRpcStub(new TestBrokerReadSession(handle, ++brokerSessionCount));
   }
 
-  async registerSourceAccess(handle: string): Promise<string | null> {
-    return brokerRegistration(handle)?.sourceAccessId ?? null;
-  }
 }
 
 /** WWWK 側で handle だけを永続化するための test-only Durable Object。 */
@@ -185,10 +199,12 @@ export class OpaqueHandlePoc extends DurableObject<Cloudflare.Env> {
   }
 
   async ingest(handle: string): Promise<void> {
-    if (!await this.broker().describe(handle)) {
+    const claimed = await this.broker().claim(handle);
+    if (!claimed) throw new Error("Source ticket is unavailable.");
+    if (!await this.broker().describe(claimed.sourceHandle)) {
       throw new Error("Source handle is unavailable.");
     }
-    this.ctx.storage.kv.put("linkedSourceHandle", handle);
+    this.ctx.storage.kv.put("linkedSourceHandle", claimed.sourceHandle);
   }
 
   async read(): Promise<string | null> {
@@ -267,6 +283,10 @@ export class WwwkTestParent extends DurableObject<Cloudflare.Env> {
     if (!brokerHandle) return;
     const registration = brokerRegistrations.get(brokerHandle);
     if (registration) registration.revoked = revoked;
+  }
+
+  lastLinkedSourceTicket(): string | undefined {
+    return brokerTicket;
   }
 
   setLinkedSourceKind(vendorId: string, tsType: string): void {

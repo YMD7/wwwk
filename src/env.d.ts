@@ -1,6 +1,10 @@
 declare namespace Cloudflare {
   interface Env {
     CFOS_SOURCE_ACCESS_BROKER: {
+      claim(sourceTicket: string): Promise<{
+        sourceHandle: string;
+        sourceAccessId: string;
+      } | null>;
       describe(handle: string): Promise<{
         vendorId: string;
         url: string;
@@ -8,7 +12,6 @@ declare namespace Cloudflare {
         tsType: string;
       } | null>;
       openReadSession(handle: string): Promise<unknown | null>;
-      registerSourceAccess(handle: string): Promise<string | null>;
     };
   }
 

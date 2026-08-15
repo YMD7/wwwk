@@ -1,16 +1,29 @@
-# Phase 5 compatibility artifacts
+# Compatibility artifacts
 
-`compatibility.json` は Phase 5 で検証した 1 組の Starter、CFOS、WWWK 基底 revision を記録する。
-installer 本体ではなく、次フェーズが一時 worktree を作る前に照合するPoCの入力である。
+`compatibility.json` は検証済みの 1 組の Starter、CFOS、WWWK 基底 revision を記録する。
+`scripts/local-installer.mjs` はこの値だけを受け付け、公式 CFOS clone の外に integration
+worktree と Wrangler state を置く。
 
 - `patches/cfos-8b08672-7964294.patch` は CFOS `8b08672` と companion revision
   `7964294` のraw diffである。
+- `patches/cfos-8b08672-linked-source-ticket.patch`は、Agent向けの値を短命かつ
+  1回限りticketとし、claim後の内部handleと分離する追加patchである。
+- `patches/cfos-8b08672-notion-page-routing.patch`は、現在のNotion Page URLをPageとして
+  判定し、解析できないURLをWorkspaceへ拡大せず拒否する追加patchである。
 - `patches/starter-93f14df-cfos-cwd.patch` は Starter `93f14df` がCFOSをCFOS自身の
   project cwdでbuildするための最小互換patchである。Starterのpnpm 11.9とCFOSのpnpm
   11.17を混在させず、各projectの指定を使う。
 - `compatibility/starter-93f14df-cfos-8b08672.pnpm-lock.yaml` はこの組を一時worktreeで
   `pnpm@11.9.0 install --lockfile-only`した結果である。実際のintegrationではこの値を
   適用してから`pnpm install --frozen-lockfile`する。
+- `patches/cfos-8b08672-local-persist.patch` は固定 CFOS runner に絶対
+  `--persist-to` を渡す最小の local-only patchである。
+- `patches/cfos-8b08672-browser-type-suppression.patch` はNode型が存在する統合workspaceでも
+  Workshop frontendの既存testをbuildできるよう、2つの型抑止を安定化する互換patchである。
+- `patches/wwwk-8ba113e-linked-source-ticket.patch`は、WWWKがticketをBrokerでclaimし、
+  Agentに露出しない内部handleだけを保存する追加patchである。
+- `compatibility/cfos-8b08672-wwwk.pnpm-lock.yaml` はCFOSへWWWK packageを追加した統合後の
+  lockfileであり、local installerはこれを使ってfrozen installする。
 
 両patchは公式repositoryのraw diffから作成したためcommit author metadataを含まない。出典の
 CFOSとStarterはいずれもApache-2.0であり、artifactとlockfileをsecret、capability、個人情報、
@@ -21,5 +34,16 @@ actual Workshop Worker名を入力として`GATEKEEPER_WWWK`と
 `CFOS_SOURCE_ACCESS_BROKER`を含む一時config値を返す。設定不足、重複binding、未対応revisionは
 生成前に拒否する。
 
-Phase 6の観測: local persistenceの保存先と既存Starter資源の再利用は、実際に`wrangler dev`を
-起動して確認してから確定する。Phase 5ではCloudflare deployや資源作成を実行していない。
+local installerでは、同じ絶対state pathをCFOS runnerから複数Workerの`wrangler dev`へ渡す。
+`starter-installer.mjs`はStarter checkoutを変更せず、同じ固定tupleを
+integration worktreeへ再現して、接続と接続解除の生成設定、build、Wrangler dry-runを行う。
+外部`deployment.jsonc`はcanonical pathと0600相当を検証してread-onlyで読み、実値を含まない
+tracked fixtureだけをgenerated configへ書く。`--apply`では実値をOSの専用0700 directory内の
+0600一時configへだけ書き、成功・失敗時の`finally`とSIGINT / SIGTERMで回収する。symlinkまたは
+既存fileは再利用せず、repository、integration worktree、managed state、永続・配布・追跡される
+artifact、ログへ実値を残さない。live runnerはWranglerのdisk logも無効化する。強制終了または電源断での
+削除は保証できない。
+
+本番のLinked Notion Sourceは、固定CFOSに含まれる`gatekeeper-notion`を利用する。installerは
+外部configの非秘密設定から専用path RouteとWorkshop service bindingを生成し、OAuth client情報は
+Wranglerの対話的なsecret登録だけで受け取る。secret値はcompatibility artifactへ含めない。

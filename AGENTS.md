@@ -10,9 +10,9 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 ## 作業前に読むもの
 
 1. `DEVELOPMENT.md`
-2. `plans/IMPLEMENTATION_PHASES.md` の現在のフェーズ
-3. `docs/PRINCIPLES.md`
-4. `docs/ARCHITECTURE.md`
+2. `docs/PRINCIPLES.md`
+3. `docs/ARCHITECTURE.md`
+4. 現在の作業計画が存在する場合は、その計画
 5. 導入に関する変更では `docs/INSTALLATION.md`
 6. 対象となる CFOS の最新コードと公式資料
 
@@ -39,8 +39,9 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 
 - 認証、権限、capability、Gatekeeper、承認、監査を独自実装しない。
 - 外部原典へのアクセスは CFOS の仕組みを利用する。
-- Linked Source には、CFOS が発行する非ポータブルな opaque handle だけを利用する。
-- WWWK は handle を保存して CFOS の stable Broker へ渡す。外部原典の binding、
+- AgentにはCFOS発行の非ポータブル、1回限りかつ短命なopaque ticketだけを
+  渡す。ticketは返値やログへ出さず、同じ実行で`ingest()`へ直接渡す。
+- WWWKはBrokerがticketと交換した内部handleだけを保存する。外部原典のbinding、
   CFOS capability Fetcher、一時的な Gatekeeper Session は保存しない。
 - 一時的な Gatekeeper Session を永続リンクとして保存しない。
 - Linked Source の Session は observation-only とし、action と hook を常に拒否する。
@@ -55,7 +56,8 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
   委ねる。WWWKはverifier、認証情報、capability、Sessionを受け取らない。
 - `sourceAccessId`は非bearer・非ポータブルなopaque IDとし、CFOSの信頼済み対応表は
   Source側OverseerのKVだけに保持する。WWWKはIDを実行時KVにだけ保存できる。
-- `sourceAccessId`、handle、verifier、Session、tokenをSQL、frontmatter、export、Agent結果、
+- ticket、`sourceAccessId`、内部handle、verifier、Session、tokenをSQL、frontmatter、
+  export、Agent結果、
   action/observation descriptionへ含めない。
 - CFOS のセキュリティ境界を迂回する設計を禁止する。
 - `ingest()` は必ず CFOS の approval queue へ送り、初期実装では自動承認を許可しない。
@@ -77,12 +79,13 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
   して適用する。upstream の契約で代替できる差分は削除する。
 - 本番では同じ Worker 名、Durable Object class、KV、R2 などの identity を維持し、
   WWWK 対応 version として再デプロイする。稼働中の Worker へコードを動的注入しない。
-- 標準アンインストールは接続解除と公式構成への再デプロイだけを行い、WWWK のデータを
-  保持する。データ消去は別の明示的な破壊操作とする。
+- 標準操作は接続解除とし、固定tupleのpatch済みWorkshopを維持したまま相互service bindingを
+  外して、WWWKのデータを保持する。未改変の公式CFOSコードへの完全復帰は提供しない。
+  データ消去は別の明示的な破壊操作とする。
 - リポジトリ直下を単一の `gatekeeper-wwwk` package とし、monorepo 化しない。
 - 手動の symbolic link は開発中の内部手順に限定し、利用者向け導入契約にしない。
 - Session API は `search()`、`read()`、`ingest()` に限定し、未合意の操作を追加しない。
-- UI、OAuth、hooks、background worker は、必要性が確定するまで追加しない。
+- UI、追加のOAuth provider、hooks、background workerは、必要性が確定するまで追加しない。
 
 ## エージェントとの境界
 
@@ -161,7 +164,7 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
   `excludeObservers` を通して CFOS に observation を遮断させる。
 - 観測済みSourceの集合は、CFOSで既存observerを検証した後、返却前にWWWK Gatekeeperの
   KVへ保存する。失敗時の過剰記録は許容するが、返却後の未記録は許可しない。
-- Phase 4の共有検証は同一Overseer/workspaceに限定する。別workspace由来のSourceは
+- 初期版の共有検証は同一Overseer/workspaceに限定する。別workspace由来のSourceは
   明示的にfail-closedとする。
 - ポータブルデータへ秘密情報や実行時 capability を含めない。
 
@@ -203,6 +206,6 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
 
 高度な検索、Source 更新の検知、UI、LLM、バックグラウンド処理、Agent Skill の具体的な
 内容と更新などの追加操作 API、複数の CFOS / Starter revision への対応、upgrade 自動化、
-データ完全消去の具体的な手順、Context Library の専用 Adapter、Linked Source の全文出力を
+Context Library の専用 Adapter、Linked Source の全文出力を
 許可する具体的な契約、reference-only bundle の詳細、Owned Source の明示的な共有ポリシー、
 Wiki の直接共有機能は未決定である。必要になるまで選定や雛形作成を行わない。

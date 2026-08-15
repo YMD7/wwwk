@@ -359,6 +359,17 @@ describe("WwwkGatekeeper", () => {
 
     expect(discovery.catalog.entries).toHaveLength(1);
     expect(discovery.catalog.entries[0].id).toBe("wwwk-session");
+    const description = discovery.catalog.entries[0].description;
+    expect(description.length).toBeLessThanOrEqual(400);
+    expect(description).toContain(
+      "$cfosLinkedSourceHandle()",
+    );
+    expect(description).toContain(
+      "source:{kind:'linked',sourceHandle}",
+    );
+    expect(description).toContain("Given a Workspace or getPage() result");
+    expect(description).toContain("do not probe RPC");
+    expect(description).toContain("Never expose or reuse sourceHandle.");
     expect(discovery.commands).toEqual([expect.objectContaining({
       id: "wwwk",
       name: "wwwk",
@@ -391,15 +402,23 @@ describe("WwwkGatekeeper", () => {
     expect(source?.content).toBe(batch.source.content);
     await expect(parent.search("owner-b", "検証用")).resolves.toEqual([]);
 
-    await parent.configureSharing(true);
+    await abortAllDurableObjects();
+    const reconnectedParent = testEnv.WWWK_TEST_PARENT.getByName("parent-a");
+    const reconnectedResults = await reconnectedParent.search("owner-a", "検証用");
+    expect(reconnectedResults).toHaveLength(1);
     await expect(
-      parent.searchOutcome("owner-a", "検証用"),
+      reconnectedParent.read("owner-a", reconnectedResults[0].id),
+    ).resolves.toMatchObject({content: batch.wiki.content});
+
+    await reconnectedParent.configureSharing(true);
+    await expect(
+      reconnectedParent.searchOutcome("owner-a", "検証用"),
     ).resolves.toMatchObject({
       ok: false,
       error: expect.stringContaining("shared"),
     });
     await expect(
-      parent.readOutcome("owner-a", results[0].id),
+      reconnectedParent.readOutcome("owner-a", reconnectedResults[0].id),
     ).resolves.toMatchObject({
       ok: false,
       error: expect.stringContaining("shared"),
@@ -421,6 +440,7 @@ describe("WwwkGatekeeper", () => {
     await parent.configureSharing(false);
     await parent.setLinkedSourceRevoked(false);
     const action = await parent.ingestLinked("linked-owner");
+    const agentTicket = await parent.lastLinkedSourceTicket();
 
     expect(action.description.awaitDecision).toBe(true);
     expect(action.description.description).toContain("連携テストページ");
@@ -440,7 +460,11 @@ describe("WwwkGatekeeper", () => {
         expect(state.storage.sql.exec<{ count: number }>(
           "SELECT COUNT(*) AS count FROM linked_sources",
         ).one().count).toBe(1);
-        expect(state.storage.kv.get(`linkedSourceHandle:${source!.id}`)).toBeDefined();
+        const storedHandle = state.storage.kv.get<string>(
+          `linkedSourceHandle:${source!.id}`,
+        );
+        expect(storedHandle).toBeDefined();
+        expect(storedHandle).not.toBe(agentTicket);
       },
     );
 

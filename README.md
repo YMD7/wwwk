@@ -18,11 +18,30 @@ export せず、外部 binding と一時 Session も保存しない。
 
 利用者へ特定の CFOS fork を要求せず、対応する公式 CFOS と
 `cloudflare-os-starter`へ、version 固定の installer が必要な差分を一時的に適用する方針を
-採用する。Phase 5では固定revision向けのpatch、互換lockfile、binding生成PoCを追跡している。
-利用者向けinstallerとCloudflare上での本番導入は未実装である。bundleを運ぶUI、CLI、archive、
-Linked Sourceのexportもまだ対象外とする。
+採用する。ローカルの対応 CFOS clone は、次の入口で起動できる。
+
+```sh
+pnpm run install:local -- --cfos "$CFOS_ROOT"
+```
+
+installer は checkout 外の state と専用 integration worktree を使い、元の clone を変更しない。
+停止後の再起動、state場所の変更、非破壊 disconnect は
+[Installation](docs/INSTALLATION.md) を参照する。対応する Starter checkout では、同じ方式で
+install / disconnect の build と Wrangler dry-run を実行できる。本番 deploy は `--apply` を
+明示し、対象の Cloudflare 資源を確認した直後のCLI確認を要する。実値はOSのowner-onlyな
+一時Wrangler configだけへ短時間書き、永続・配布・追跡されるartifactには残さない。bundleを
+運ぶUI、archive、Linked Sourceのexportはまだ対象外とする。
+
+通常のdisconnectはWWWK dataを保持する。接続解除後にWWWKの2つのDurable Object namespace
+だけを消去する明示的な`erase:local` / `erase:starter`も提供する。既定はplan / dry-runであり、
+実行には`--apply`と完全一致の対話確認が必要である。
 
 導入契約と現在の実装状況は [Installation](docs/INSTALLATION.md) を参照する。
+
+初期スコープの実装は完了している。検証済みの対応組では、ローカル環境での保存、検索、
+原典追跡、再起動後の永続化に加え、Starter環境への導入、Notion PageのLinked Source取込み、
+承認までを確認済みである。本番環境での複数ユーザー分離と共有observerの受入は未実施である。
+複数revision対応や自動upgradeも未対応とする。
 
 ## 独立性と商標
 
@@ -34,7 +53,6 @@ Cloudflare および関連する名称とロゴは、Cloudflare, Inc. の商標�
 ## ドキュメント
 
 - [Development](DEVELOPMENT.md)
-- [Implementation phases](plans/IMPLEMENTATION_PHASES.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Installation](docs/INSTALLATION.md)
 - [Principles](docs/PRINCIPLES.md)

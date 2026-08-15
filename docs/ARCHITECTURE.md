@@ -43,6 +43,11 @@ WWWK は独立した Gatekeeper Worker とし、CFOS から `GATEKEEPER_WWWK` se
 WWWK リポジトリ直下を単一の `gatekeeper-wwwk` package とし、独自の `packages/` 階層や
 monorepo は作らない。
 
+初期Linked SourceであるNotionはCFOSの`gatekeeper-notion`をそのまま利用する。Workshopの
+Custom Domainは維持し、OAuth用の`/gatekeeper/notion/*`だけをNotion Workerの具体的なRouteへ
+割り当てる。Workshopは`GATEKEEPER_NOTION` service bindingで同じWorkerへ接続する。OAuth client
+情報と利用者tokenはWWWKへ渡さず、Notion GatekeeperとCloudflare secretに保持する。
+
 公式 CFOS の公開拡張境界だけでは、Linked Source の stable Broker と共有 Gadget の
 observer 検証を表現できない。installer はこの差分を CFOS の対応 revision 専用 patch として
 一時 worktree へ適用する。利用者へ WWWK 専用の CFOS / Starter fork を要求せず、利用者の
@@ -76,9 +81,9 @@ fail-closed とする。複数の上流 version を推測で扱う互換層は�
 
 既存の Starter deployment へ導入する場合は、account、Worker 名、Durable Object class、
 KV namespace、R2 bucket、認証設定を維持する。WWWK Worker だけを新しく追加し、Workshop
-を同じ名前で更新する。標準アンインストールは binding と companion 差分を外した公式構成へ
-戻すが、WWWK Worker とデータは保持する。データ消去は export を検討した後に行う別の
-明示的な破壊操作とする。
+を同じ名前で更新する。標準の接続解除は、固定tupleのpatch済みWorkshopを維持したまま相互
+service bindingを外し、WWWK Workerとデータを保持する。未改変の公式CFOSコードへの完全復帰は
+提供しない。データ消去はexportを検討した後に行う別の明示的な破壊操作とする。
 
 手動の symbolic link は、installer が完成するまでの内部的なローカル開発手順に限定する。
 利用者向けの導入契約にはしない。詳細は [Installation](INSTALLATION.md) に記録する。
@@ -97,8 +102,9 @@ WWWK は、AI 向けの利用方法を 1 つの Agent Skill として提供す�
 - 必須の Skill は WWWK 自身が提供し、Context Library の有無に依存させない。
 
 ローカル MVP では静的な `skills/wwwk/SKILL.md` を package に同梱する。Gatekeeper の
-`getSlashCommandProvider()` が `/wwwk` として Skill を返し、`getAgentCatalog()` は
-Session の用途だけを Agent に提示する。Skill の自動読込み、Skill の更新方式、更新などの
+`getSlashCommandProvider()` が `/wwwk` として Skill を返す。`getAgentCatalog()` はSessionの
+用途に加え、添付されたNotion PageをLinked Sourceとして取り込む正確な最小手順を
+Agentへ提示する。Skill の自動読込み、Skill の更新方式、更新などの
 追加操作 API は未決定とする。
 
 ## 初期ユーザーフロー
@@ -150,7 +156,10 @@ interface WwwkSession {
 }
 
 interface WwwkIngestInput {
-  source: WwwkDocumentDraft;
+  source: WwwkDocumentDraft | {
+    kind: "linked";
+    sourceHandle: string;
+  };
   evidence: WwwkDocumentDraft;
   wiki: WwwkDocumentDraft;
 }
@@ -197,7 +206,8 @@ interface WwwkInputRef {
 - `list()`、`trace()`、ページングは、実測した必要性が出るまで追加しない。
 - `ingest()` は、ユーザーが指定した 1 つのテキストを Source、Evidence、新規 Wiki と
   してまとめて保存する。`source.content` は指定された入力を変更せず受け取る。
-- Agent は title と content だけを渡す。ID、type、生成依存リンク、content hash、
+- Owned Sourceでは、Agentはtitleとcontentだけを渡す。Linked Sourceでは、
+  `kind` と一回限りのticketだけをSourceとして渡す。ID、type、生成依存リンク、content hash、
   作成日時、所有者、生成メタデータは WWWK Core が生成または記録する。
 - 戻り値は `void` とし、承認前の文書や provisional ID を API へ露出しない。
 
@@ -231,36 +241,47 @@ Linked Source は、外部原典への実行時接続と、その接続を利用
 revision の組である。capability とポータブルな Source revision は分離して管理する。
 
 - 外部原典への接続、再認可、監査、失効は CFOS に委ねる。
-- WWWK は、CFOS発行のopaque handleをstable Brokerへ渡して原典を取得する。
+- WWWKは、Agentが受け取ったCFOS発行の短命ticketをstable Brokerでclaimし、
+  内部handleから原典を取得する。
 - 来歴を確定する本文は、Agent の自己申告を信頼せず、WWWK の Adapter が capability
   から取得する。
 - Source の種類は明示的な allowlist と Adapter で段階的に追加し、最初から汎用
   Source プロトコルを作らない。
 - 初期対応はNotion Pageだけとする。
-- handle と接続状態はポータブルデータに含めない。reference-only の Linked Source は、
+- ticket、内部handle、接続状態はポータブルデータに含めない。reference-onlyの
+  Linked Sourceは、
   インポート後に再リンクするまで利用不能とする。
 - 有効なhandleをCFOS Brokerで確認できない Linked Source とその派生データは、fail-closed
   で利用不能とする。
 
-### Linked Source handle と Broker
+### Linked Source ticket、内部handle、Broker
 
 ```ts
 interface SourceAccessBroker {
+  claim(ticket: string): Promise<{
+    sourceHandle: string;
+    sourceAccessId: string;
+  } | null>;
   describe(handle: string): Promise<LinkedSourceDescription | null>;
   openReadSession(handle: string): Promise<unknown | null>;
-  registerSourceAccess(handle: string): Promise<string | null>;
 }
 ```
 
-- Agentは接続済みNotion bindingの`$cfosLinkedSourceHandle()`からhandleを取得し、
-  `ingest()`の`sourceHandle`として渡す。
-- handleはCFOSが発行する推測不能、失効可能、非ポータブルな値である。WWWKが永続化する
-  実行時接続はこのhandleだけとし、外部原典のbinding、Fetcher、一時Sessionは保存しない。
+- AgentはCFOSへ直接接続されたNotion Page bindingだけからticketを取得する。Notion
+  Workspace bindingや`getPage()`で得たPageは使わず、対象Page単体の接続を要求する。
+- Agentは`$cfosLinkedSourceHandle()`の戻り値を同じ実行内で`ingest()`の
+  `sourceHandle`へ直接渡す。ticketを返値、会話、Evidence、Wiki、metadata、ログへ出さない。
+- ticketは推測不能、非ポータブル、発行から5分で失効、1回限りである。同じ接続から
+  新しいticketを発行すると、未使用の旧ticketは失効する。
+- `claim(ticket)`はticketを消費し、Agentへ露出しない内部handleと、observer検証に
+  使う非bearer `sourceAccessId`を返す。失効、再利用、不明は`null`でfail-closedにする。
+- WWWKが永続化する実行時接続は内部handleだけとし、ticket、外部原典のbinding、
+  Fetcher、一時Sessionは保存しない。
 - `describe(handle)`はAdapter選択と来歴記録に必要な非秘密情報だけを返す。
 - `openReadSession(handle)`はCFOSでhandleを検証してから、呼び出すたび新しい一時Sessionを
   返す。失効、不明、障害は`null`でfail-closedにする。
-- `registerSourceAccess(handle)`は本文を開けない非bearer IDを返す。IDの信頼済み対応表は
-  CFOS側だけで保持し、共有時のobserver検証にだけ使う。
+- `sourceAccessId`の信頼済み対応表はCFOS側だけで保持し、共有時のobserver検証に
+  だけ使う。
 - Session は observation-only の承認キューで開く。`authorizeObservation()` は CFOS の
   監査へ記録し、`submitAction()` と `bindHook()` は常に拒否する。
 - Source 参照は、元の Agent セッションではなく `linked-source` として監査する。
@@ -276,7 +297,7 @@ WWWK の情報を使った Gadget は、実際に返す文書の生成元を共�
 - `search()` は結果集合、`read()` は返す文書から、Wiki -> Evidence -> Source revision の
   閉包をSQLで求め、Linked Sourceの和集合を重複なく使う。`ingest()`だけでは共有要件を
   追加しない。
-- CFOSはhandleから非bearerのopaque `sourceAccessId`を発行し、Source Gatekeeperとの対応を
+- CFOSはticketのclaim時に非bearerのopaque `sourceAccessId`を発行し、Source Gatekeeperとの対応を
   Source側Overseerのembedded KVだけに保持する。WWWKはopaque IDを実行時KVにだけ保存する。
 - WWWKは`sourceAccessId`をSQL、frontmatter、export、Agent結果、action/observationの
   descriptionへ含めない。verifier、認証情報、外部capability、Sessionも保持しない。
@@ -395,7 +416,7 @@ account の revoke は、同じ SQLite-backed Durable Object の transaction で
 
 ## ポータブルデータ
 
-Phase 2 の Bundle v1 は、archive や filesystem に依存しない plain data として扱う。
+Bundle v1 は、archive や filesystem に依存しない plain data として扱う。
 
 ```ts
 type WwwkPortableBundle = {
@@ -470,7 +491,7 @@ transaction 内で実行しない。検証または保存に失敗した場合�
 ### エクスポート境界
 
 - Owned Source とその派生データは、self-contained bundle としてエクスポートできる。
-- Phase 3では、Linked Sourceとその派生データを含むself-contained exportを拒否する。
+- 初期版では、Linked Sourceとその派生データを含むself-contained exportを拒否する。
 - Linked Sourceの全文出力とreference-only bundleは、出力許可を含むCFOS契約を確定して
   から扱う。
 - 自動または定期エクスポートは初期スコープに含めない。
@@ -595,11 +616,19 @@ Bundle v1 の厳密な YAML スキーマは「ポータブルデータ」に定�
 
 インデックスや履歴ファイルを提供する場合も、再生成可能な補助データとして扱う。
 
+## データ消去境界
+
+- 標準の接続解除はWWWK dataを保持し、完全消去は独立した破壊操作とする。
+- 完全消去は接続解除、対象identity、exportの要否、不可逆性を確認してから実行する。
+- ローカルではWWWKの2つのDurable Object namespaceだけを削除する。
+- Cloudflareでは2つのclassの`deleted` tombstoneを同じWWWK Workerへdeployしてから、
+  依存関係保護を有効にしたままWorkerを削除する。
+- CFOS、ほかのGatekeeper、共有KV / R2、ローカルstate全体は削除しない。
+
 ## 未決定事項
 
 - Agent Skill の自動読込みと更新方式、更新などの追加操作 API
 - installer の最小 CLI、複数 revision への対応、upgrade 自動化
-- WWWK データだけを完全消去する具体的な手順
 - 検索件数の上限、高度な検索方式、UI、LLM、バックグラウンド処理
 - Source 更新を検知する時期と方法
 - Context Library と連携する専用 Adapter

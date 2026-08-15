@@ -8,7 +8,17 @@
     "build": "tsc",
     "types:check": "tsc --noEmit",
     "test": "vitest run",
-    "test:installer-poc": "node --test scripts/installer-poc.test.mjs"
+    "test:installer-poc": "node --test scripts/installer-poc.test.mjs",
+    "test:local-installer": "node --test scripts/local-installer.test.mjs",
+    "test:starter-installer": "node --test scripts/starter-installer.test.mjs",
+    "install:local": "node scripts/local-installer.mjs",
+    "disconnect:local": "node scripts/local-installer.mjs disconnect",
+    "erase:local": "node scripts/local-installer.mjs erase",
+    "install:starter": "node scripts/starter-installer.mjs",
+    "install:notion-starter": "node scripts/starter-installer.mjs notion",
+    "bootstrap:starter": "node scripts/starter-installer.mjs bootstrap",
+    "disconnect:starter": "node scripts/starter-installer.mjs disconnect",
+    "erase:starter": "node scripts/starter-installer.mjs erase"
   },
   "dependencies": {
     "capnweb": "^0.8.0",

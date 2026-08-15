@@ -1,0 +1,217 @@
+diff --git a/packages/gatekeeper-notion/__tests__/notion-api.test.ts b/packages/gatekeeper-notion/__tests__/notion-api.test.ts
+index 358933f..44185af 100644
+--- a/packages/gatekeeper-notion/__tests__/notion-api.test.ts
++++ b/packages/gatekeeper-notion/__tests__/notion-api.test.ts
+@@ -1,0 +2,4 @@ import { describe, expect, it } from "vitest";
++import {
++  resolveRequestedResource,
++  type SupportedResource,
++} from "@gadgets/workshop-shared/gatekeeper";
+@@ -3,0 +8,3 @@ import {
++  classifyNotionResourceUrl,
++  isNotionWorkspaceResourcePattern,
++  LEGACY_NOTION_WORKSPACE_URL_PATTERN,
+@@ -4,0 +12,2 @@ import {
++  NOTION_ITEM_URL_PATTERN,
++  NOTION_WORKSPACE_URL_PATTERN,
+@@ -65,0 +75,64 @@ describe("parseNotionId", () => {
++describe("Notion resource routing", () => {
++  const itemId = "8513f007-d607-4da8-8eeb-abcbcd0b78f4";
++  const resources: SupportedResource[] = [{
++    urlPattern: NOTION_WORKSPACE_URL_PATTERN,
++    title: "Notion Workspace",
++    description: "Whole workspace",
++  }, {
++    urlPattern: NOTION_ITEM_URL_PATTERN,
++    title: "Notion Page or Database",
++    description: "Specific item",
++  }];
++
++  it("routes both current Notion page URL forms to one item", () => {
++    expect(classifyNotionResourceUrl(
++      "https://www.notion.so/Team-Home-8513f007d6074da88eebabcbcd0b78f4",
++    )).toEqual({ kind: "item", itemId });
++    expect(classifyNotionResourceUrl(
++      "https://app.notion.com/p/Team-Home-8513f007d6074da88eebabcbcd0b78f4",
++    )).toEqual({ kind: "item", itemId });
++
++    const pattern = new URLPattern(NOTION_ITEM_URL_PATTERN);
++    expect(pattern.test("https://www.notion.so/8513f007d6074da88eebabcbcd0b78f4")).toBe(true);
++    expect(pattern.test("https://app.notion.com/p/8513f007d6074da88eebabcbcd0b78f4")).toBe(true);
++    expect(resolveRequestedResource(
++      resources,
++      "https://app.notion.com/p/8513f007d6074da88eebabcbcd0b78f4",
++    )).toMatchObject({ ok: true, resource: { title: "Notion Page or Database" } });
++  });
++
++  it("routes only an explicit Notion root to the workspace", () => {
++    expect(classifyNotionResourceUrl("https://www.notion.so/")).toEqual({ kind: "workspace" });
++    expect(resolveRequestedResource(resources, "https://www.notion.so/"))
++      .toMatchObject({ ok: true, resource: { title: "Notion Workspace" } });
++    expect(() => classifyNotionResourceUrl("https://example.invalid/page"))
++      .toThrow("Unsupported Notion resource URL");
++    expect(() => classifyNotionResourceUrl("https://app.notion.com/p/not-a-page"))
++      .toThrow("Could not find a Notion ID");
++    expect(() => classifyNotionResourceUrl("http://www.notion.so/"))
++      .toThrow("Unsupported Notion resource URL");
++    expect(() => classifyNotionResourceUrl("https://team.notion.so/"))
++      .toThrow("Unsupported Notion resource URL");
++    expect(() => classifyNotionResourceUrl("https://www.notion.so:444/"))
++      .toThrow("Unsupported Notion resource URL");
++    expect(() => classifyNotionResourceUrl("https://user@www.notion.so/"))
++      .toThrow("Unsupported Notion resource URL");
++    expect(resolveRequestedResource(resources, "https://example.invalid/page"))
++      .toMatchObject({ ok: false });
++    expect(resolveRequestedResource(resources, undefined))
++      .toMatchObject({ ok: false });
++    expect(resolveRequestedResource([{
++      urlPattern: "https://*",
++      title: "Whole instance",
++      description: "Catch-all vendor",
++    }], "https://instance.example.com"))
++      .toMatchObject({ ok: true, resource: { title: "Whole instance" } });
++  });
++
++  it("keeps the legacy workspace resource pattern configurable", () => {
++    expect(isNotionWorkspaceResourcePattern(NOTION_WORKSPACE_URL_PATTERN)).toBe(true);
++    expect(isNotionWorkspaceResourcePattern(LEGACY_NOTION_WORKSPACE_URL_PATTERN)).toBe(true);
++    expect(isNotionWorkspaceResourcePattern(NOTION_ITEM_URL_PATTERN)).toBe(false);
++  });
++});
++
+diff --git a/packages/gatekeeper-notion/src/notion-api.ts b/packages/gatekeeper-notion/src/notion-api.ts
+index 5cdb57a..cd46125 100644
+--- a/packages/gatekeeper-notion/src/notion-api.ts
++++ b/packages/gatekeeper-notion/src/notion-api.ts
+@@ -659,0 +660,38 @@ export function primaryDataSourceId(db: NotionDatabaseResponse): string {
++export const NOTION_ITEM_URL_PATTERN =
++  "https://:host(www\\.notion\\.so|app\\.notion\\.com)/:path+";
++export const NOTION_WORKSPACE_URL_PATTERN =
++  "https://:host(www\\.notion\\.so|app\\.notion\\.com)/";
++export const LEGACY_NOTION_WORKSPACE_URL_PATTERN = "https://*";
++
++export function isNotionWorkspaceResourcePattern(resourceUrlPattern: string): boolean {
++  return resourceUrlPattern === NOTION_WORKSPACE_URL_PATTERN ||
++    resourceUrlPattern === LEGACY_NOTION_WORKSPACE_URL_PATTERN;
++}
++
++export type NotionResourceTarget =
++  | { kind: "item"; itemId: string }
++  | { kind: "workspace" };
++
++// Classify only explicit Notion resource URLs. An unrecognized item URL must not widen into the
++// whole-workspace capability.
++export function classifyNotionResourceUrl(resourceUrl: string): NotionResourceTarget {
++  let parsed: URL;
++  try {
++    parsed = new URL(resourceUrl);
++  } catch {
++    throw new NotionApiError(400, "Invalid Notion resource URL.");
++  }
++
++  if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port) {
++    throw new NotionApiError(400, "Unsupported Notion resource URL.");
++  }
++  const hostname = parsed.hostname.toLowerCase();
++  const isNotionHost = hostname === "www.notion.so" || hostname === "app.notion.com";
++  if (!isNotionHost) {
++    throw new NotionApiError(400, "Unsupported Notion resource URL.");
++  }
++
++  if (parsed.pathname.replace(/\/+$/, "") === "") return { kind: "workspace" };
++  return { kind: "item", itemId: parseNotionId(resourceUrl) };
++}
++
+diff --git a/packages/gatekeeper-notion/src/notion.ts b/packages/gatekeeper-notion/src/notion.ts
+index 3429910..fd94d8c 100644
+--- a/packages/gatekeeper-notion/src/notion.ts
++++ b/packages/gatekeeper-notion/src/notion.ts
+@@ -35,0 +36,3 @@ import {
++  NOTION_ITEM_URL_PATTERN,
++  NOTION_WORKSPACE_URL_PATTERN,
++  classifyNotionResourceUrl,
+@@ -38,0 +42 @@ import {
++  isNotionWorkspaceResourcePattern,
+@@ -154 +158 @@ const WORKSPACE_RESOURCE: SupportedResource = {
+-  urlPattern: "https://*",
++  urlPattern: NOTION_WORKSPACE_URL_PATTERN,
+@@ -160 +164 @@ const ITEM_RESOURCE: SupportedResource = {
+-  urlPattern: "https://www.notion.so/:path+",
++  urlPattern: NOTION_ITEM_URL_PATTERN,
+@@ -198,18 +201,0 @@ const NOT_CONFIGURED_HTML = `<!DOCTYPE html>
+-// Extract a Notion object ID from a resource URL, or null if there isn't one (e.g. the
+-// whole-workspace catch-all URL).
+-function idFromResourceUrl(url: string): string | null {
+-  let parsed: URL;
+-  try {
+-    parsed = new URL(url);
+-  } catch {
+-    return null;
+-  }
+-  if (!/(^|\.)notion\.so$/i.test(parsed.hostname)) return null;
+-  if (stripTrailingSlashes(parsed.pathname).length === 0) return null;
+-  try {
+-    return parseNotionId(url);
+-  } catch {
+-    return null;
+-  }
+-}
+-
+@@ -519,2 +505,2 @@ export class GatekeeperUserImpl extends WorkerEntrypoint<Env, GatekeeperUserImpl
+-    const id = idFromResourceUrl(url);
+-    if (id) {
++    const target = classifyNotionResourceUrl(url);
++    if (target.kind === "item") {
+@@ -523 +509 @@ export class GatekeeperUserImpl extends WorkerEntrypoint<Env, GatekeeperUserImpl
+-        itemId: id,
++        itemId: target.itemId,
+@@ -543 +529 @@ export class GatekeeperUserImpl extends WorkerEntrypoint<Env, GatekeeperUserImpl
+-    if (resourceUrlPattern === WORKSPACE_RESOURCE.urlPattern) {
++    if (isNotionWorkspaceResourcePattern(resourceUrlPattern)) {
+diff --git a/packages/workshop-backend/__tests__/admin-config.test.ts b/packages/workshop-backend/__tests__/admin-config.test.ts
+index bd74bfc..861cc0d 100644
+--- a/packages/workshop-backend/__tests__/admin-config.test.ts
++++ b/packages/workshop-backend/__tests__/admin-config.test.ts
+@@ -2 +2 @@ import { describe, expect, it } from "vitest";
+-import { DEFAULT_ADMIN_CONFIG, defaultOutputFormatId, parseAdminConfig, reorderFormats, resolveFormatOutput, sanitizeOutputOverrides, serializeAdminConfig } from "../src/admin-config.js";
++import { DEFAULT_ADMIN_CONFIG, defaultOutputFormatId, filterEnabledResources, isResourceDisabled, parseAdminConfig, reorderFormats, resolveFormatOutput, sanitizeOutputOverrides, serializeAdminConfig } from "../src/admin-config.js";
+@@ -51,0 +52,21 @@ describe("parseAdminConfig", () => {
++
++  it("preserves a legacy Notion workspace resource denial", () => {
++    const workspacePattern = "https://:host(www\\.notion\\.so|app\\.notion\\.com)/";
++    const itemPattern = "https://:host(www\\.notion\\.so|app\\.notion\\.com)/:path+";
++    const config = parseAdminConfig(JSON.stringify({
++      disabledResources: { notion: ["https://*"] },
++    }));
++    const resources = [{
++      urlPattern: workspacePattern,
++      title: "Notion Workspace",
++      description: "Whole workspace",
++    }, {
++      urlPattern: itemPattern,
++      title: "Notion Page or Database",
++      description: "Specific item",
++    }];
++
++    expect(config.disabledResources.notion).toEqual([workspacePattern]);
++    expect(isResourceDisabled(config, "notion", workspacePattern)).toBe(true);
++    expect(filterEnabledResources(config, "notion", resources)).toEqual([resources[1]]);
++  });
+diff --git a/packages/workshop-backend/src/admin-config.ts b/packages/workshop-backend/src/admin-config.ts
+index 43e9563..7536b64 100644
+--- a/packages/workshop-backend/src/admin-config.ts
++++ b/packages/workshop-backend/src/admin-config.ts
+@@ -249,0 +250,10 @@ function strings(value: unknown): string[] {
++const LEGACY_NOTION_WORKSPACE_PATTERN = "https://*";
++const NOTION_WORKSPACE_PATTERN =
++  "https://:host(www\\.notion\\.so|app\\.notion\\.com)/";
++
++function migrateDisabledResourcePatterns(vendorId: string, patterns: string[]): string[] {
++  if (vendorId.toLowerCase() !== "notion") return patterns;
++  return [...new Set(patterns.map(pattern =>
++    pattern === LEGACY_NOTION_WORKSPACE_PATTERN ? NOTION_WORKSPACE_PATTERN : pattern))];
++}
++
+@@ -257 +267 @@ export function parseAdminConfig(raw: string | null): AdminConfig {
+-        let list = strings(patterns);
++        let list = migrateDisabledResourcePatterns(vendorId, strings(patterns));

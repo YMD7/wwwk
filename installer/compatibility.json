@@ -8,9 +8,17 @@
   "cfos": {
     "baseRevision": "8b08672050e6957987a87b5f9cab2801ba89b42c",
     "companionRevision": "7964294",
-    "patch": "patches/cfos-8b08672-7964294.patch"
+    "patch": "patches/cfos-8b08672-7964294.patch",
+    "sourceTicketPatch": "patches/cfos-8b08672-linked-source-ticket.patch",
+    "notionPageRoutingPatch": "patches/cfos-8b08672-notion-page-routing.patch",
+    "disconnectPatch": "patches/cfos-8b08672-dormant-unbound-ambient.patch",
+    "browserTypePatch": "patches/cfos-8b08672-browser-type-suppression.patch",
+    "lockfile": "compatibility/cfos-8b08672-wwwk.pnpm-lock.yaml",
+    "localPatch": "patches/cfos-8b08672-local-persist.patch"
   },
   "wwwk": {
-    "baseRevision": "8ba113e8b5c74f9722ed3e6cdb8ad515e86a2be7"
+    "baseRevision": "8ba113e8b5c74f9722ed3e6cdb8ad515e86a2be7",
+    "patch": "patches/wwwk-8ba113e-stub-storage.patch",
+    "sourceTicketPatch": "patches/wwwk-8ba113e-linked-source-ticket.patch"
   }
 }

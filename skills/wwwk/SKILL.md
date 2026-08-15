@@ -29,12 +29,19 @@ WWWKは所有者専用の個人Wikiである。利用可能な場合は、一般
 
 ユーザーが接続済みのNotion Pageを保存するよう明示した場合は、次の手順だけを使う。
 
-1. Notion bindingの`$cfosLinkedSourceHandle()`を呼び、CFOS発行のhandleを得る。
-2. `source: { kind: "linked", sourceHandle }`を`ingest()`へ渡す。
+ここでいうNotion Pageは、CFOSへ直接接続され、個別のbindingとして添付されたPageに限る。
+Notion Workspace bindingや`getPage()`で得たPageではticket発行を試さず、対象Page単体の
+接続を要求する。RPC methodの列挙、存在確認、試行呼出しは行わない。
+
+1. 直接添付されたNotion Page bindingの`$cfosLinkedSourceHandle()`を呼び、CFOS発行の
+   一回限りticketを得る。
+2. 同じ`executeCode`内で、戻り値を`sourceHandle`として
+   `source: { kind: "linked", sourceHandle }`へ直接渡す。
 3. EvidenceとWikiには、取得済みの本文を転記せず、保存意図に必要なtitleとcontentだけを渡す。
 
 - AgentはNotion Pageの本文、title、URLをSourceとして組み立てたり送信したりしない。
-- handleを会話、Evidence、Wiki、metadata、ログへ出さない。
+- ticketを返値、会話、Evidence、Wiki、metadata、ログへ出さない。
+- ticketは短命かつ1回限りであり、別の実行に保持または再利用しない。
 - WWWKはCFOS Brokerを通じて本文と来歴を取得し、CFOSの監査と承認に従って保存する。
 
 $ARGUMENT

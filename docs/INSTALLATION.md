@@ -3,9 +3,13 @@
 ## 状態
 
 WWWK の利用者向け導入方式は、version 固定の installer とする。特定の CFOS または
-`cloudflare-os-starter` fork は要求しない。利用者向けinstallerは未実装である。Phase 5のPoCは
-固定revision向けのpatch、互換lockfile、双方向service bindingの生成値を追跡し、次フェーズの
-実装入力にする。
+`cloudflare-os-starter` fork は要求しない。対応する公式 CFOS clone をローカルで起動する入口と、
+対応する Starter checkout に対する build、Wrangler dry-run、明示確認付きのlive runnerを
+提供する。Cloudflare deployは、実行直前の明示承認が必要である。
+
+検証済みの対応組では、Starterへのlive導入とNotion PageのLinked Source取込み、承認を
+確認済みである。本番環境での複数ユーザー分離と共有observerの受入は未実施であり、現時点では
+focused testで契約を確認している。
 
 現在の symbolic link 手順は内部的なローカル開発専用である。利用者向けの install / uninstall
 契約にはしない。
@@ -20,9 +24,9 @@ installer は、次の 2 つの環境へ同じ `gatekeeper-wwwk` を導入する
 初期版は、検証済みの Starter、CFOS、WWWK、companion patch の 1 組だけを対応対象にする。
 任意 version への自動適用、競合解決、upgrade 自動化は行わない。
 
-Phase 5の対応組とraw patchは[installer/](../installer/)で追跡する。StarterはCFOSを自身の
+対応組とraw patchは[installer/](../installer/)で追跡する。StarterはCFOSを自身の
 project cwdでbuildする最小互換patchも必要とする。両repositoryの公式checkoutは変更せず、
-次フェーズで一時worktreeへだけ適用する。
+一時worktreeへだけ適用する。
 
 ## 導入モデル
 
@@ -33,6 +37,10 @@ WWWK は独立した Gatekeeper Worker であり、Workshop の `GATEKEEPER_WWWK
 公式 CFOS の現行契約だけでは、stable Broker と共有 Gadget の observer 検証を表現できない。
 そのため、installer は WWWK repository で追跡された companion patch を一時 worktree の
 公式 CFOS へ適用する。
+追加patchは、Agent向けの短命かつ1回限りticketと、WWWK内部のstable handleを
+分離するBroker契約も含む。
+Agentへ露出していた旧`cfosls1` handleは移行せずfail-closedで失効させる。
+そのhandleを使う既存Linked Sourceがある場合は、再接続後に取り込み直す。
 
 ```text
 利用者の公式 checkout
@@ -92,19 +100,48 @@ CFOS package のコピーは作らない。
 
 ## ローカル導入
 
-初期の installer は、利用者が指定した公式 CFOS clone から専用の integration worktree を
-作る。そこへ companion patch と WWWK package を接続し、既存の CFOS 開発サーバーで起動する。
+対応する公式 CFOS clone を固定 revisionでcheckoutし、cleanな状態で次を実行する。
+
+```sh
+pnpm run install:local -- --cfos "$CFOS_ROOT"
+```
+
+既定ではstateを`$XDG_STATE_HOME/wwwk/local`、未設定時は
+`~/.local/state/wwwk/local`へ保存する。別の場所を使う場合は、再起動とdisconnectでも同じ
+絶対pathを指定する。
+
+```sh
+pnpm run install:local -- \
+  --cfos "$CFOS_ROOT" \
+  --state-dir "$STATE_DIR"
+```
+
+installer は state の隣に管理用 integration worktreeを作り、そこだけへ companion patch、
+local persistence patch、固定 WWWK runtime、統合 lockfileを適用して`pnpm install
+--frozen-lockfile`後に既存のCFOS dev runnerを起動する。CFOS checkoutとその`.wrangler` stateは
+変更しない。runner は同じ state path を全Workerの`wrangler dev --persist-to`へ渡す。
+
+停止後は同じコマンドを実行して再起動できる。stateとWWWKのSQLite dataは保持される。
+
+```sh
+pnpm run disconnect:local -- \
+  --cfos "$CFOS_ROOT" \
+  --state-dir "$STATE_DIR"
+```
+
+local disconnectは、所有を確認したintegration worktreeだけを外す。state、SQLite data、
+portable data、CFOS checkout、Git履歴、CFOS全体の`.wrangler` stateは削除しない。再接続では
+同じstate pathを指定する。
+
+次の場合は変更前にfail-closedで停止する。
+
+- official CFOS origin、固定revision、cleanなworking treeのいずれかが一致しない
+- managed stateまたはintegration worktreeの所有を確認できない
+- patch、固定runtime、統合lockfile、service bindingが一致しない
 
 installer の実装前は、開発者だけが CFOS の `packages/gatekeeper-wwwk` から WWWK へ
 symbolic link を作成して検証できる。この手順は互換契約ではなく、対応 revision の確認なしに
 一般利用者へ案内しない。
-
-ローカル installer の実装では、次を実証してから保存場所を確定する。
-
-- 利用者の CFOS checkout を変更しないこと
-- 再実行後も同じ WWWK / CFOS ローカルデータを利用できること
-- 接続解除後も WWWK データを保持できること
-- CFOS 全体の `.wrangler` state を削除せずに WWWK だけを扱えること
 
 ## Cloudflare OS Starter への導入
 
@@ -128,34 +165,170 @@ version を同じ Worker 名へデプロイする。WWWK の
 公式 hosted deploy など、対応する Starter checkout と設定を確認できない deployment は、
 初期対象に含めない。
 
-## アンインストール
+### Starter の plan / dry-run
 
-アンインストールは接続解除とデータ消去を分離する。
+次のコマンドは Starter checkout を変更せず、管理 state の integration worktree で固定 tuple、
+patch、設定を検証した後に build と Wrangler dry-run を行う。既定では Cloudflare の状態を読まず、
+deploy しない。
+
+```sh
+pnpm run install:starter -- \
+  --starter "$STARTER_ROOT" \
+  --wwwk-worker "$WWWK_WORKER" \
+  --deployment-config "$DEPLOYMENT_CONFIG"
+```
+
+接続解除の plan / dry-run は次のとおりである。
+
+```sh
+pnpm run disconnect:starter -- \
+  --starter "$STARTER_ROOT" \
+  --wwwk-worker "$WWWK_WORKER" \
+  --deployment-config "$DEPLOYMENT_CONFIG"
+```
+
+`$DEPLOYMENT_CONFIG` は Starter checkout と installer managed state の外に置く通常ファイルで、
+group / other の権限を持たない0600相当でなければならない。installer はcanonical pathを確認し、
+このファイルをread-onlyでメモリにだけ読み込む。実値はrepository、integration worktree、managed
+state、ログ、PRへ書かず、dry-runには追跡されたfixtureだけを使う。
+
+`--apply`では、Wrangler実行に必要な設定だけをOSの一時領域に作る。directoryは推測困難な専用の
+0700、configは0600であり、symlinkまたは既存fileの再利用を拒否する。この一時configは成功・失敗とも
+`finally`で削除し、SIGINT / SIGTERMでも可能な範囲で回収する。強制終了または電源断では削除を完全には
+保証できないため、復旧後にOSの一時領域を確認する。この一時configは永続、配布、追跡されるartifactでは
+ない。live runnerはWranglerのdisk logも無効化する。live実行ではidentity確認後にCLIがsecret-freeな
+実行計画を表示し、`y`で明示確認されるまでCloudflareを変更しない。
+
+### Linked Notion Source
+
+Notion PageをLinked Sourceとして使う場合は、外部deployment configへ次の非秘密情報を追加する。
+WorkshopはCustom Domainを使用していなければならない。
+
+```json
+{
+  "wwwk": {
+    "notion": {
+      "workerName": "example-notion-gatekeeper",
+      "zoneName": "example.com"
+    }
+  }
+}
+```
+
+Notionのpublic connectionには、`https://<Workshop Custom Domain>/gatekeeper/notion/oauth`を
+redirect URIとして登録する。Marketplaceへの掲載は不要である。Notion Workerをbuild、dry-run
+する場合は次を実行する。
+
+```sh
+pnpm run install:notion-starter -- \
+  --starter "$STARTER_ROOT" \
+  --wwwk-worker "$WWWK_WORKER" \
+  --deployment-config "$DEPLOYMENT_CONFIG"
+```
+
+`--apply`を付けると、既存WorkshopとWWWKのidentityを確認し、Notion Workerを
+`<Workshop Custom Domain>/gatekeeper/notion/*`のRouteへdeployする。既に接続済みでも、固定tupleの
+CFOS patchを反映するためWorkshopを再deployする。続いてWranglerが
+`CLIENT_ID`と`CLIENT_SECRET`を対話入力で受け取り、どちらもsecret bindingとして登録した後、
+Workshopへ`GATEKEEPER_NOTION`を追加する。値を引数、deployment config、生成物、ログへ保存しない。
+途中で停止した場合はNotion Workerだけが未接続で残ることがある。同じコマンドを再実行すると、
+確認済みのWorkerとsecretを再利用して接続を完了する。
+
+以後の`install:starter`、`disconnect:starter`、`erase:starter`も同じdeployment configを使う。
+これにより、WWWKの接続状態を変えてもNotion bindingを保持する。
+
+新規 Starter は先に基底deploymentを別の明示承認で完了している必要がある。
+
+基底deploymentがない新規環境では、同じ外部configと固定tupleからplan / dry-runを実行する。
+
+```sh
+pnpm run bootstrap:starter -- \
+  --starter "$STARTER_ROOT" \
+  --wwwk-worker "$WWWK_WORKER" \
+  --deployment-config "$DEPLOYMENT_CONFIG"
+```
+
+`--apply`では、Context KV、Blueprints KV、Avatars KV、Blueprint Content R2のIDまたは名前を
+外部configへ明示する。自動provisionは後続のidentity照合へ引き継げないため使用しない。すべての
+対象Worker名にversionが存在しないことをlive確認し、Workshop名を含む完全一致の対話確認後にだけ
+Error Reporter、Context、Custom Gatekeeper、Workshopの順でstrict deployする。実値は既存live
+runnerと同じowner-only一時configだけに置く。この操作はWWWKをdeployまたは接続しない。
+
+途中で失敗した場合、成功済みの新規Workerは残る。自動rollbackは行わず、live状態を確認してから
+残ったWorkerを明示的に整理し、未使用名で再実行する。
+
+## 接続解除とデータ消去
+
+標準操作は接続解除とし、データ消去と分離する。接続解除は導入前のコードへ戻す完全な
+アンインストールではない。
 
 ### 接続解除
 
-標準のアンインストールは、test、build、dry-run が成功した構成だけをデプロイし、次の
-状態へ戻す。
+接続解除は、test、build、dry-run が成功した構成だけをデプロイし、次の状態にする。
 
-- Workshop は `GATEKEEPER_WWWK` と companion patch を含まない公式構成である。
+- Workshop は固定tupleのcompanion patchを維持し、`GATEKEEPER_WWWK`を外す。
 - WWWK Worker は `CFOS_SOURCE_ACCESS_BROKER` を外すが、同じ Durable Object class と
   データを保持する。
 - CFOS から WWWK へ新しい Session を開始できない。
 
-双方向 binding と Workshop entrypoint を安全に外す具体的なデプロイ順は、Phase 7 で実際の
-Cloudflare binding contractを確認して確定する。推測した順序をinstallerへ実装しない。
+これは未改変の公式CFOSコードへの完全復帰ではない。bindingがない既存WWWK accountを
+dormantとして安全に扱い、同じデータへ再接続できるようにするため、対応するcompanion patchは
+Workshopに残す。
+
+live runnerの実装後、disconnect は Workshop から `GATEKEEPER_WWWK` を外して先に deploy し、
+その後 WWWK から `CFOS_SOURCE_ACCESS_BROKER` を外して deploy する。どちらの deploy も事前の
+identity 検証と実行直前の明示承認が必要である。
 
 WWWK Worker、`WwwkLibrary`、portable bundle、WWWK repository は削除しない。再接続時は、
 同じ WWWK Worker とデータを利用できるようにする。
 
 ### データの完全消去
 
-完全消去は、別の明示的な破壊操作とする。実行前に export の要否、対象 Worker、対象
-Durable Object namespace を確認する。CFOS 本体、ほかの Gatekeeper、共有 KV / R2、
-`.wrangler` state 全体を削除してはならない。
+完全消去は接続解除後にだけ実行できる。コマンドは export を行わないため、必要なデータは
+先に別途 export する。削除後の SQLite データを WWWK から回復することはできない。
 
-WWWK データだけを安全に消去する具体的な Cloudflare / ローカル手順は未確定であり、
-installer の接続解除が成立してから別フェーズで実装する。
+ローカルでは、CFOS を停止して `disconnect:local` を完了した後に計画を確認する。
+
+```sh
+pnpm run erase:local -- \
+  --cfos "$CFOS_ROOT" \
+  --state-dir "$STATE_DIR"
+```
+
+削除を実行する場合だけ `--apply` を追加する。CLI は対象path、export、不可逆性を表示し、
+`erase local WWWK` の完全一致を要求する。削除対象は次の2つに限定する。
+
+- `gatekeeper-wwwk-WwwkLibrary` のローカル Durable Object namespace
+- `gatekeeper-wwwk-WwwkGatekeeper` のローカル Durable Object namespace
+
+CFOS、ほかの Gatekeeper、KV、R2、管理metadata、`v3` state全体は保持する。対象または親が
+symbolic linkの場合は削除せず停止する。local runnerとeraseはmanaged stateのowner-onlyな
+PID leaseを排他的に取得し、同じstateを別processが使用中の場合も削除せず停止する。eraseは
+lease取得後にdisconnect状態を再検証してから削除する。強制終了や電源断で
+`local-state-lease.json`が残った場合は自動回収しない。すべてのlocal processが停止したことを
+確認してから、managed state内のこのfileだけを手動で削除する。
+
+Cloudflareでは、`disconnect:starter --apply`を完了した後に計画とWrangler dry-runを確認する。
+
+```sh
+pnpm run erase:starter -- \
+  --starter "$STARTER_ROOT" \
+  --wwwk-worker "$WWWK_WORKER" \
+  --deployment-config "$DEPLOYMENT_CONFIG"
+```
+
+削除を実行する場合だけ `--apply` を追加する。installerは現在のWorkshopに
+`GATEKEEPER_WWWK`がなく、WWWKに`CFOS_SOURCE_ACCESS_BROKER`がないことと、対象WWWKが
+`WwwkLibrary`、`WwwkGatekeeper`のSQLite namespaceを所有することを確認する。その後、対象と
+不可逆性を表示し、`erase $WWWK_WORKER`の完全一致を要求する。
+
+確認後は、2つのclassをコードから外した`deleted` tombstone versionを同じWWWK Workerへ
+deployし、namespaceとデータを削除してからWorkerを削除する。Wranglerの依存関係保護を有効な
+まま使い、`--force`は使用しない。Workshop、ほかのGatekeeper、KV、R2は削除しない。
+
+ローカルは対象directoryがなくなったこと、Cloudflareは対象Workerが存在しないことを確認する。
+どちらも元データの復元機能は提供しない。必要なbundleがある場合に限り、後で再導入してimport
+できる。
 
 ## Upgrade
 
