@@ -168,3 +168,50 @@ index 3429910..fd94d8c 100644
 @@ -543 +529 @@ export class GatekeeperUserImpl extends WorkerEntrypoint<Env, GatekeeperUserImpl
 -    if (resourceUrlPattern === WORKSPACE_RESOURCE.urlPattern) {
 +    if (isNotionWorkspaceResourcePattern(resourceUrlPattern)) {
+diff --git a/packages/workshop-backend/__tests__/admin-config.test.ts b/packages/workshop-backend/__tests__/admin-config.test.ts
+index bd74bfc..861cc0d 100644
+--- a/packages/workshop-backend/__tests__/admin-config.test.ts
++++ b/packages/workshop-backend/__tests__/admin-config.test.ts
+@@ -2 +2 @@ import { describe, expect, it } from "vitest";
+-import { DEFAULT_ADMIN_CONFIG, defaultOutputFormatId, parseAdminConfig, reorderFormats, resolveFormatOutput, sanitizeOutputOverrides, serializeAdminConfig } from "../src/admin-config.js";
++import { DEFAULT_ADMIN_CONFIG, defaultOutputFormatId, filterEnabledResources, isResourceDisabled, parseAdminConfig, reorderFormats, resolveFormatOutput, sanitizeOutputOverrides, serializeAdminConfig } from "../src/admin-config.js";
+@@ -51,0 +52,21 @@ describe("parseAdminConfig", () => {
++
++  it("preserves a legacy Notion workspace resource denial", () => {
++    const workspacePattern = "https://:host(www\\.notion\\.so|app\\.notion\\.com)/";
++    const itemPattern = "https://:host(www\\.notion\\.so|app\\.notion\\.com)/:path+";
++    const config = parseAdminConfig(JSON.stringify({
++      disabledResources: { notion: ["https://*"] },
++    }));
++    const resources = [{
++      urlPattern: workspacePattern,
++      title: "Notion Workspace",
++      description: "Whole workspace",
++    }, {
++      urlPattern: itemPattern,
++      title: "Notion Page or Database",
++      description: "Specific item",
++    }];
++
++    expect(config.disabledResources.notion).toEqual([workspacePattern]);
++    expect(isResourceDisabled(config, "notion", workspacePattern)).toBe(true);
++    expect(filterEnabledResources(config, "notion", resources)).toEqual([resources[1]]);
++  });
+diff --git a/packages/workshop-backend/src/admin-config.ts b/packages/workshop-backend/src/admin-config.ts
+index 43e9563..7536b64 100644
+--- a/packages/workshop-backend/src/admin-config.ts
++++ b/packages/workshop-backend/src/admin-config.ts
+@@ -249,0 +250,10 @@ function strings(value: unknown): string[] {
++const LEGACY_NOTION_WORKSPACE_PATTERN = "https://*";
++const NOTION_WORKSPACE_PATTERN =
++  "https://:host(www\\.notion\\.so|app\\.notion\\.com)/";
++
++function migrateDisabledResourcePatterns(vendorId: string, patterns: string[]): string[] {
++  if (vendorId.toLowerCase() !== "notion") return patterns;
++  return [...new Set(patterns.map(pattern =>
++    pattern === LEGACY_NOTION_WORKSPACE_PATTERN ? NOTION_WORKSPACE_PATTERN : pattern))];
++}
++
+@@ -257 +267 @@ export function parseAdminConfig(raw: string | null): AdminConfig {
+-        let list = strings(patterns);
++        let list = migrateDisabledResourcePatterns(vendorId, strings(patterns));
