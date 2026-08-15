@@ -79,8 +79,9 @@ WWWK は、Cloudflare OS（CFOS）へ個人専用の LLM Wiki を追加する拡
   して適用する。upstream の契約で代替できる差分は削除する。
 - 本番では同じ Worker 名、Durable Object class、KV、R2 などの identity を維持し、
   WWWK 対応 version として再デプロイする。稼働中の Worker へコードを動的注入しない。
-- 標準アンインストールは接続解除と公式構成への再デプロイだけを行い、WWWK のデータを
-  保持する。データ消去は別の明示的な破壊操作とする。
+- 標準操作は接続解除とし、固定tupleのpatch済みWorkshopを維持したまま相互service bindingを
+  外して、WWWKのデータを保持する。未改変の公式CFOSコードへの完全復帰は提供しない。
+  データ消去は別の明示的な破壊操作とする。
 - リポジトリ直下を単一の `gatekeeper-wwwk` package とし、monorepo 化しない。
 - 手動の symbolic link は開発中の内部手順に限定し、利用者向け導入契約にしない。
 - Session API は `search()`、`read()`、`ingest()` に限定し、未合意の操作を追加しない。

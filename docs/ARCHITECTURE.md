@@ -81,9 +81,9 @@ fail-closed とする。複数の上流 version を推測で扱う互換層は�
 
 既存の Starter deployment へ導入する場合は、account、Worker 名、Durable Object class、
 KV namespace、R2 bucket、認証設定を維持する。WWWK Worker だけを新しく追加し、Workshop
-を同じ名前で更新する。標準アンインストールは binding と companion 差分を外した公式構成へ
-戻すが、WWWK Worker とデータは保持する。データ消去は export を検討した後に行う別の
-明示的な破壊操作とする。
+を同じ名前で更新する。標準の接続解除は、固定tupleのpatch済みWorkshopを維持したまま相互
+service bindingを外し、WWWK Workerとデータを保持する。未改変の公式CFOSコードへの完全復帰は
+提供しない。データ消去はexportを検討した後に行う別の明示的な破壊操作とする。
 
 手動の symbolic link は、installer が完成するまでの内部的なローカル開発手順に限定する。
 利用者向けの導入契約にはしない。詳細は [Installation](INSTALLATION.md) に記録する。
