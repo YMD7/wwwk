@@ -40,7 +40,8 @@ install / disconnect の build と Wrangler dry-run を実行できる。本番 
 
 初期スコープの実装は完了している。検証済みの対応組では、ローカル環境での保存、検索、
 原典追跡、再起動後の永続化に加え、Starter環境への導入、Notion PageのLinked Source取込み、
-承認までを確認済みである。複数revision対応や自動upgradeは未対応とする。
+承認までを確認済みである。本番環境での複数ユーザー分離と共有observerの受入は未実施である。
+複数revision対応や自動upgradeも未対応とする。
 
 ## 独立性と商標
 

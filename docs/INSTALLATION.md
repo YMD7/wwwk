@@ -7,6 +7,10 @@ WWWK の利用者向け導入方式は、version 固定の installer とする�
 対応する Starter checkout に対する build、Wrangler dry-run、明示確認付きのlive runnerを
 提供する。Cloudflare deployは、実行直前の明示承認が必要である。
 
+検証済みの対応組では、Starterへのlive導入とNotion PageのLinked Source取込み、承認を
+確認済みである。本番環境での複数ユーザー分離と共有observerの受入は未実施であり、現時点では
+focused testで契約を確認している。
+
 現在の symbolic link 手順は内部的なローカル開発専用である。利用者向けの install / uninstall
 契約にはしない。
 
