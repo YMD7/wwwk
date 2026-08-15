@@ -1304,7 +1304,7 @@ async function deployNotionLive(configs, cfosRoot) {
         configPaths.workshop,
       );
       if (!workshop) fail("Baseline Starter deploy cannot be identified.");
-      const workshopConnected = verifyNotionWorkshopState(
+      verifyNotionWorkshopState(
         workshop,
         configs.starter.workshop,
         configs.wwwk.name,
@@ -1321,10 +1321,8 @@ async function deployNotionLive(configs, cfosRoot) {
       )) {
         fail("Notion Worker name is already in use without a production deployment.");
       }
-      const missingSecrets = notion
-        ? verifyNotionIdentity(notion, configs.notion, {requireSecrets: false})
-        : [...notionSecrets];
-      return {workshopConnected, notionExists: Boolean(notion), missingSecrets};
+      if (notion) verifyNotionIdentity(notion, configs.notion, {requireSecrets: false});
+      return {notionExists: Boolean(notion)};
     };
 
     await inspect();
@@ -1361,9 +1359,9 @@ async function deployNotionLive(configs, cfosRoot) {
     );
     if (!notion) fail("Notion Worker cannot be identified after secret configuration.");
     verifyNotionIdentity(notion, configs.notion);
-    if (!before.workshopConnected) {
-      await deploy(directories.workshop, configPaths.workshop);
-    }
+    // Refresh Workshop even when Notion is already connected so every fixed-tuple CFOS patch is
+    // applied during an idempotent installer update.
+    await deploy(directories.workshop, configPaths.workshop);
     const workshop = await currentWorkerVersion(
       directories.workshop,
       configs.deployment.workers.workshop.name,

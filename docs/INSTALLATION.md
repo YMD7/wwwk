@@ -224,7 +224,8 @@ pnpm run install:notion-starter -- \
 ```
 
 `--apply`を付けると、既存WorkshopとWWWKのidentityを確認し、Notion Workerを
-`<Workshop Custom Domain>/gatekeeper/notion/*`のRouteへdeployする。続いてWranglerが
+`<Workshop Custom Domain>/gatekeeper/notion/*`のRouteへdeployする。既に接続済みでも、固定tupleの
+CFOS patchを反映するためWorkshopを再deployする。続いてWranglerが
 `CLIENT_ID`と`CLIENT_SECRET`を対話入力で受け取り、どちらもsecret bindingとして登録した後、
 Workshopへ`GATEKEEPER_NOTION`を追加する。値を引数、deployment config、生成物、ログへ保存しない。
 途中で停止した場合はNotion Workerだけが未接続で残ることがある。同じコマンドを再実行すると、
